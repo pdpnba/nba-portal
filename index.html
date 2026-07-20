@@ -212,6 +212,7 @@ const state = {
   name: null,
   userId: null,
   semester: null,     // for student
+  enrollment: null,   // for student
   courses: [],
   industries: [],
   view: null,
@@ -366,7 +367,7 @@ async function showLoginForm(role){
     state.role = role;
     state.name = match.name;
     state.userId = match.id;
-    if(role==='student'){ state.semester = match.semester || 1; }
+    if(role==='student'){ state.semester = match.semester || 1; state.enrollment = match.enrollment || ''; }
     loginSuccess();
   };
   document.getElementById('lf-submit').addEventListener('click', doSubmit);
@@ -389,7 +390,7 @@ function loginSuccess(){
 }
 
 document.getElementById('logout-btn').addEventListener('click', ()=>{
-  state.role=null; state.name=null; state.semester=null; state.userId=null; state.view=null; state.sub={};
+  state.role=null; state.name=null; state.semester=null; state.enrollment=null; state.userId=null; state.view=null; state.sub={};
   document.getElementById('app-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('role-select').style.display='grid';
@@ -407,6 +408,7 @@ const menus = {
   admin:[
     {grp:'Administration', items:[
       {id:'users', label:'Manage Users'},
+      {id:'students', label:'Student Roster'},
     ]},
     {grp:'Exit Survey', items:[
       {id:'survey-params', label:'Survey Parameters'},
@@ -433,7 +435,6 @@ const menus = {
   student:[
     {grp:'Exit Survey', items:[
       {id:'ces-fill', label:'Course Exit Survey'},
-      {id:'pes-fill', label:'Program Exit Survey', requireSem6:true},
     ]}
   ],
   guest:[
@@ -481,6 +482,7 @@ async function renderView(view){
   state.courses = []; // force a fresh read so courses added elsewhere show up
   const renderers = {
     'users': renderUsers,
+    'students': renderStudentRoster,
     'survey-params': renderSurveyParams,
     'survey-responses': renderSurveyResponses,
     'industries': renderIndustries,
@@ -488,11 +490,10 @@ async function renderView(view){
     'results': renderResults,
     'copo': renderCopo,
     'attainment': renderAttainment,
-    'ces-fill': renderCesFill,
-    'pes-fill': renderPesFill,
-    'guest-parent': ()=>renderGuestSurvey('parent'),
-    'guest-industry': ()=>renderGuestSurvey('industry'),
-    'guest-alumni': ()=>renderGuestSurvey('alumni'),
+    'ces-fill': ()=>renderStakeholderSurveyFill('student'),
+    'guest-parent': ()=>renderStakeholderSurveyFill('parent'),
+    'guest-industry': ()=>renderStakeholderSurveyFill('industry'),
+    'guest-alumni': ()=>renderStakeholderSurveyFill('alumni'),
   };
   if(renderers[view]) await renderers[view]();
   else c.innerHTML = `<div class="empty">Not found</div>`;
@@ -555,6 +556,7 @@ async function renderUsers(){
     <div class="card">
       <h3>Add a Student account</h3>
       <div class="row-flex">
+        <div class="field"><label>Enrollment Number</label><input id="s-enrollment" placeholder="e.g. 23410360118"/></div>
         <div class="field"><label>Full Name</label><input id="s-name" placeholder="e.g. A. Kulkarni"/></div>
         <div class="field"><label>Username</label><input id="s-username" placeholder="e.g. akulkarni"/></div>
         <div class="field"><label>Password</label><input id="s-password" type="password" placeholder="Set a password"/></div>
@@ -566,8 +568,8 @@ async function renderUsers(){
       <h3>Students (${students.length})</h3>
       ${students.length===0?'<div class="empty">No student accounts yet.</div>':`
       <div class="table-wrap"><table>
-        <tr><th>Name</th><th>Username</th><th>Semester</th><th></th></tr>
-        ${students.map(u=>`<tr><td>${u.name}</td><td>${u.username}</td><td>Sem ${u.semester}</td><td>
+        <tr><th>Enrollment No.</th><th>Name</th><th>Username</th><th>Semester</th><th></th></tr>
+        ${students.map(u=>`<tr><td>${u.enrollment||'—'}</td><td>${u.name}</td><td>${u.username}</td><td>Sem ${u.semester}</td><td>
           <button class="icon-btn" data-reset="${u.id}">Reset Password</button>
           &nbsp;|&nbsp;
           <button class="icon-btn" data-del="${u.id}">Remove</button>
@@ -604,13 +606,14 @@ async function renderUsers(){
   });
 
   document.getElementById('s-add').addEventListener('click', async ()=>{
+    const enrollment = document.getElementById('s-enrollment').value.trim();
     const name = document.getElementById('s-name').value.trim();
     const username = document.getElementById('s-username').value.trim();
     const password = document.getElementById('s-password').value;
     const semester = parseInt(document.getElementById('s-semester').value,10);
-    if(!name||!username||!password){ toast('Fill name, username and password'); return; }
+    if(!enrollment||!name||!username||!password){ toast('Fill enrollment number, name, username and password'); return; }
     if(users.some(u=>u.username.toLowerCase()===username.toLowerCase())){ toast('That username is already taken'); return; }
-    users.push({id:uid('usr'), role:'student', name, username, password, semester});
+    users.push({id:uid('usr'), role:'student', name, username, password, semester, enrollment});
     await sSet('users', users);
     renderUsers();
   });
@@ -628,6 +631,84 @@ async function renderUsers(){
     await sSet('users', users);
     toast('Password reset');
     renderUsers();
+  }));
+}
+
+/* ======================================================================
+   ADMIN: STUDENT ROSTER (bulk upload / bulk delete, semester-wise)
+   ====================================================================== */
+async function renderStudentRoster(){
+  const c = document.getElementById('content');
+  const sem = state.sub.rosterSem || 1;
+  state.sub.rosterSem = sem;
+  const roster = (await sGet('students_roster')) || [];
+  const inSem = roster.filter(s=>s.semester===sem);
+
+  c.innerHTML = `
+    <div class="crumb">Administration</div>
+    <div class="page-head"><div><h2>Student Roster</h2><p class="sub">Upload the current student list semester-wise — this drives who can be looked up in surveys and reports.</p></div></div>
+    <div class="tabs">
+      ${[1,2,3,4,5,6].map(n=>`<button class="tab-btn ${sem===n?'active':''}" data-sem="${n}">Sem ${n}</button>`).join('')}
+    </div>
+    <div class="card">
+      <h3>Bulk Upload — Semester ${sem}</h3>
+      <p class="small-note">Excel/CSV columns, in order: <b>Enrollment Number, Student Name, Division, Academic Year</b>. First row can be a header — non-numeric enrollment numbers in row 1 are skipped automatically.</p>
+      <div class="file-drop">
+        <input type="file" id="roster-file" accept=".xlsx,.xls,.csv" />
+        <p style="margin-top:8px;">Choose a file for Semester ${sem}</p>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <h3 style="margin:0;">Semester ${sem} Students (${inSem.length})</h3>
+        ${inSem.length>0?`<button class="btn btn-danger" id="roster-clear">Bulk Delete — Semester ${sem}</button>`:''}
+      </div>
+      ${inSem.length===0?'<div class="empty">No students uploaded for this semester yet.</div>':`
+      <div class="table-wrap"><table>
+        <tr><th>Enrollment No.</th><th>Name</th><th>Division</th><th>Academic Year</th><th></th></tr>
+        ${inSem.map(s=>`<tr><td>${s.enrollment}</td><td>${s.name}</td><td>${s.division||''}</td><td>${s.academicYear||''}</td><td><button class="icon-btn" data-del="${s.id}">Remove</button></td></tr>`).join('')}
+      </table></div>`}
+    </div>
+  `;
+  c.querySelectorAll('[data-sem]').forEach(b=>b.addEventListener('click', ()=>{ state.sub.rosterSem=parseInt(b.dataset.sem,10); renderStudentRoster(); }));
+
+  document.getElementById('roster-file').addEventListener('change', async (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    let added = 0, skipped = 0;
+    json.forEach(row=>{
+      const enrollment = String(row[0]||'').trim();
+      const name = String(row[1]||'').trim();
+      if(!enrollment || !/^\d+$/.test(enrollment) || !name){ skipped++; return; }
+      const division = String(row[2]||'').trim();
+      const academicYear = String(row[3]||'').trim();
+      const existingIdx = roster.findIndex(s=>s.enrollment===enrollment && s.semester===sem);
+      const rec = {id: existingIdx>-1?roster[existingIdx].id:uid('stu'), enrollment, name, semester:sem, division, academicYear};
+      if(existingIdx>-1) roster[existingIdx]=rec; else roster.push(rec);
+      added++;
+    });
+    if(added===0){ toast('No valid rows found — check the column order'); return; }
+    await sSet('students_roster', roster);
+    toast(added+' student(s) added/updated'+(skipped?`, ${skipped} row(s) skipped`:''));
+    renderStudentRoster();
+  });
+
+  const clearBtn = document.getElementById('roster-clear');
+  if(clearBtn) clearBtn.addEventListener('click', async ()=>{
+    if(!confirm(`Remove all ${inSem.length} student(s) from Semester ${sem}? This cannot be undone.`)) return;
+    const remaining = roster.filter(s=>s.semester!==sem);
+    await sSet('students_roster', remaining);
+    toast('Semester '+sem+' roster cleared');
+    renderStudentRoster();
+  });
+
+  c.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
+    const remaining = roster.filter(s=>s.id!==b.dataset.del);
+    await sSet('students_roster', remaining);
+    renderStudentRoster();
   }));
 }
 
@@ -723,11 +804,38 @@ async function renderCourseParamsTab(){
       </div>
       <button class="btn btn-outline" id="co-add">+ Add CO</button>
       <button class="btn btn-primary" id="co-save" style="margin-left:8px;">Save Parameters</button>
+      <div class="file-drop" style="margin-top:16px;">
+        <input type="file" id="co-file" accept=".xlsx,.xls,.csv" />
+        <p style="margin-top:8px;">Or bulk-upload COs for this subject — first column = CO code (optional, auto-filled if blank), second column = CO statement, one CO per row.</p>
+      </div>
     </div>
   `;
   document.getElementById('sp-course-select').addEventListener('change', e=>{ state.sub.spCourseId=e.target.value; renderSurveyParams(); });
+  const coFile = document.getElementById('co-file');
+  if(coFile) coFile.addEventListener('change', async (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const course = state.courses.find(x=>x.id===selId);
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    let added = 0;
+    json.forEach(row=>{
+      const text = (row[1]!==undefined && row[1]!=='') ? String(row[1]) : (row[0]!==undefined ? String(row[0]) : '');
+      if(!text) return;
+      const codeGiven = (row[1]!==undefined && row[1]!=='') ? String(row[0]) : '';
+      const code = codeGiven || ((course?course.code:'CO')+'.'+(params.length+1));
+      params.push({id:uid('co'), code, text: row[1]!==undefined && row[1]!=='' ? String(row[1]) : text});
+      added++;
+    });
+    if(added===0){ toast('No rows found to import'); return; }
+    await sSet('ces_params:'+selId, params);
+    toast(added+' Course Outcome(s) imported');
+    renderSurveyParams();
+  });
   document.getElementById('co-add').addEventListener('click', async ()=>{
-    params.push({id:uid('co'), code:'CO'+(params.length+1), text:''});
+    const course = state.courses.find(x=>x.id===selId);
+    params.push({id:uid('co'), code:(course?course.code:'CO')+'.'+(params.length+1), text:''});
     await sSet('ces_params:'+selId, params);
     renderSurveyParams();
   });
@@ -827,239 +935,233 @@ async function renderIndustries(){
 }
 
 /* ======================================================================
-   STUDENT: COURSE EXIT SURVEY (fill)
+   SUBJECT-WISE CO SURVEY ENGINE (shared by Student, Parent, Alumni, Industry)
+   Layout matches the institute's Course Exit Survey format: one row per
+   respondent, columns grouped by Subject → Course Outcome.
    ====================================================================== */
-async function renderCesFill(){
+async function buildSubjectColumns(semester){
   await loadCoursesIfNeeded();
-  const c = document.getElementById('content');
-  const eligible = state.courses.filter(co=>co.semester===state.semester);
-  const pool = eligible.length ? eligible : state.courses;
-  if(pool.length===0){ c.innerHTML = `<div class="empty">No courses have been set up yet by the admin.</div>`; return; }
-  const selId = state.sub.cesCourseId || pool[0].id;
-  state.sub.cesCourseId = selId;
-  const params = (await sGet('ces_params:'+selId)) || [];
-  c.innerHTML = `
-    <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">Fill this after your examination for the course, rating each Course Outcome.</p></div></div>
-    <div class="card">
-      <div class="field" style="max-width:340px;"><label>Course</label>
-        <select id="ces-course-select">${pool.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name}</option>`).join('')}</select>
-      </div>
-      ${params.length===0?'<div class="empty">The admin has not defined COs for this course yet.</div>':`
-      <form id="ces-form">
-        ${params.map(p=>`
-          <div class="co-block">
-            <div class="co-q"><b>${p.code}</b> — ${p.text||'(no statement given)'}</div>
-            <div class="rating-group" data-co="${p.id}">
-              ${['1 - Low','2 - Moderate','3 - High'].map((lab,idx)=>`<div class="rating-opt" data-val="${idx+1}">${lab}</div>`).join('')}
-            </div>
-          </div>`).join('')}
-        <button type="button" class="btn btn-primary" id="ces-submit" style="margin-top:8px;">Submit Survey</button>
-      </form>`}
-    </div>
-  `;
-  document.getElementById('ces-course-select').addEventListener('change', e=>{ state.sub.cesCourseId=e.target.value; renderCesFill(); });
-  c.querySelectorAll('.rating-group').forEach(g=>{
-    g.querySelectorAll('.rating-opt').forEach(o=>o.addEventListener('click', ()=>{
-      g.querySelectorAll('.rating-opt').forEach(x=>x.classList.remove('sel'));
-      o.classList.add('sel');
-    }));
-  });
-  const submitBtn = document.getElementById('ces-submit');
-  if(submitBtn) submitBtn.addEventListener('click', async ()=>{
-    const ratings = {};
-    let complete=true;
-    c.querySelectorAll('.rating-group').forEach(g=>{
-      const sel = g.querySelector('.rating-opt.sel');
-      if(!sel) complete=false;
-      ratings[g.dataset.co] = sel ? parseInt(sel.dataset.val,10) : null;
-    });
-    if(!complete){ toast('Please rate every Course Outcome'); return; }
-    const responses = (await sGet('ces_responses:'+selId)) || [];
-    responses.push({id:uid('resp'), student:state.name, semester:state.semester, ratings, submittedAt:new Date().toISOString()});
-    await sSet('ces_responses:'+selId, responses);
-    toast('Survey submitted — thank you!');
-    renderCesFill();
-  });
+  const subs = state.courses.filter(co=>co.semester===semester);
+  const cols = [];
+  for(const course of subs){
+    const cos = (await sGet('ces_params:'+course.id)) || [];
+    cols.push({course, cos});
+  }
+  return cols; // [{course:{id,code,name,semester}, cos:[{id,code,text}]}]
 }
 
-/* ======================================================================
-   STUDENT: PROGRAM EXIT SURVEY (fill) — sem 6 only
-   ====================================================================== */
-async function renderPesFill(){
-  const c = document.getElementById('content');
-  const params = (await sGet('program_params')) || [];
-  c.innerHTML = `
-    <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>Program Exit Survey</h2><p class="sub">Final-year (Semester 6) students only — rate each Program Outcome / PSO.</p></div></div>
-    <div class="card">
-      ${params.length===0?'<div class="empty">The admin has not defined program parameters yet.</div>':`
-      <form id="pes-form">
-        ${params.map(p=>`
-          <div class="co-block">
-            <div class="co-q"><b>${p.code}</b> — ${p.text||'(no statement given)'}</div>
-            <div class="rating-group" data-po="${p.id}">
-              ${['1 - Low','2 - Moderate','3 - High'].map((lab,idx)=>`<div class="rating-opt" data-val="${idx+1}">${lab}</div>`).join('')}
-            </div>
-          </div>`).join('')}
-        <button type="button" class="btn btn-primary" id="pes-submit" style="margin-top:8px;">Submit Survey</button>
-      </form>`}
-    </div>
-  `;
-  c.querySelectorAll('.rating-group').forEach(g=>{
-    g.querySelectorAll('.rating-opt').forEach(o=>o.addEventListener('click', ()=>{
-      g.querySelectorAll('.rating-opt').forEach(x=>x.classList.remove('sel'));
-      o.classList.add('sel');
-    }));
-  });
-  const submitBtn = document.getElementById('pes-submit');
-  if(submitBtn) submitBtn.addEventListener('click', async ()=>{
-    const ratings={}; let complete=true;
-    c.querySelectorAll('.rating-group').forEach(g=>{
-      const sel=g.querySelector('.rating-opt.sel'); if(!sel) complete=false;
-      ratings[g.dataset.po]= sel?parseInt(sel.dataset.val,10):null;
-    });
-    if(!complete){ toast('Please rate every parameter'); return; }
-    const responses = (await sGet('pes_responses')) || [];
-    responses.push({id:uid('resp'), student:state.name, ratings, submittedAt:new Date().toISOString()});
-    await sSet('pes_responses', responses);
-    toast('Survey submitted — thank you!');
-    renderPesFill();
-  });
+function renderSubjectGroupHeader(subjectCols, firstColLabel){
+  const groupRow = `<tr><th rowspan="2" style="min-width:170px;vertical-align:bottom;">${firstColLabel}</th>${subjectCols.map(sc=>`<th colspan="${sc.cos.length||1}" style="text-align:center;">${sc.course.code}<div style="font-weight:400;text-transform:none;font-size:11px;">${sc.course.name}</div></th>`).join('')}</tr>`;
+  const coRow = `<tr>${subjectCols.map(sc=> sc.cos.length? sc.cos.map(co=>`<th style="text-align:center;">${co.code}</th>`).join('') : `<th>&mdash;</th>`).join('')}</tr>`;
+  return groupRow+coRow;
 }
 
-/* ======================================================================
-   GUEST: PARENT / INDUSTRY / ALUMNI SURVEY (fill)
-   ====================================================================== */
-async function renderGuestSurvey(kind){
+function identityLabel(kind, r){
+  if(kind==='student') return `${r.enrollment} — ${r.name}`;
+  if(kind==='parent') return `${r.name} (parent of ${r.studentName||'—'}, Enr. ${r.enrollment||'—'})`;
+  if(kind==='alumni') return `${r.name}${r.batch?' — Batch '+r.batch:''}`;
+  if(kind==='industry') return `${r.name} — ${r.industry||''}`;
+  return r.name||'';
+}
+
+const stakeholderTitles = {student:'Course Exit Survey', parent:'Parent Feedback Survey', industry:'Industry Feedback Survey', alumni:'Alumni Feedback Survey'};
+
+/* ---------- FILL FORM (used by student / parent / alumni / industry) ---------- */
+async function renderStakeholderSurveyFill(kind){
   const c = document.getElementById('content');
-  const params = (await sGet('program_params')) || [];
-  const titleMap = {parent:'Parent Feedback Survey', industry:'Industry Feedback Survey', alumni:'Alumni Feedback Survey'};
-  let identityFields = '';
+  await loadCoursesIfNeeded();
+
+  const semester = kind==='student' ? (state.semester || 1) : (state.sub['fillSem_'+kind] || 1);
+  const subjectCols = await buildSubjectColumns(semester);
+  const totalCos = subjectCols.reduce((n,sc)=>n+(sc.cos.length||0),0);
+
   let industries = [];
-  if(kind==='parent'){
-    identityFields = `
-      <div class="row-flex">
-        <div class="field"><label>Your Name (Parent)</label><input id="g-name" /></div>
-        <div class="field"><label>Student's Name</label><input id="g-student" /></div>
-      </div>`;
+  if(kind==='industry') industries = (await sGet('industries')) || [];
+
+  const semSelector = kind==='student' ? '' : `
+    <div class="field" style="max-width:220px;"><label>Semester (subjects being rated)</label>
+      <select id="fill-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${semester===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
+    </div>`;
+
+  let identityFields = '';
+  if(kind==='student'){
+    identityFields = `<p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name} &middot; Semester ${semester}</p>`;
+  } else if(kind==='parent'){
+    identityFields = `<div class="row-flex">
+      <div class="field"><label>Your Name (Parent)</label><input id="fill-name"/></div>
+      <div class="field"><label>Child's Enrollment Number</label><input id="fill-enrollment"/></div>
+      <div class="field"><label>Child's Name</label><input id="fill-student-name"/></div>
+    </div>`;
   } else if(kind==='alumni'){
-    identityFields = `<div class="field"><label>Your Name (Alumni)</label><input id="g-name" /></div>`;
+    identityFields = `<div class="row-flex">
+      <div class="field"><label>Your Name (Alumni)</label><input id="fill-name"/></div>
+      <div class="field"><label>Passing / Batch Year</label><input id="fill-batch"/></div>
+    </div>`;
   } else if(kind==='industry'){
-    industries = (await sGet('industries')) || [];
-    identityFields = `
+    identityFields = `<div class="row-flex">
       <div class="field"><label>Select Industry</label>
-        <select id="g-industry">${industries.length===0?'<option value="">No industries added by admin yet</option>':industries.map(i=>`<option value="${i.id}">${i.name} — ${i.director}</option>`).join('')}</select>
+        <select id="fill-industry">${industries.length===0?'<option value="">No industries added by admin yet</option>':industries.map(i=>`<option value="${i.id}">${i.name} — ${i.director}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Your Name (Representative)</label><input id="g-name" /></div>`;
+      <div class="field"><label>Your Name (Representative)</label><input id="fill-name"/></div>
+    </div>`;
   }
 
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>${titleMap[kind]}</h2><p class="sub">Ratings use the same Program Outcome / PSO parameter set defined by the institute.</p></div></div>
+    <div class="page-head"><div><h2>${stakeholderTitles[kind]}</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
     <div class="card">
+      ${semSelector}
       ${identityFields}
-      ${params.length===0?'<div class="empty">The admin has not defined program parameters yet.</div>':`
-      <form id="g-form" style="margin-top:12px;">
-        ${params.map(p=>`
-          <div class="co-block">
-            <div class="co-q"><b>${p.code}</b> — ${p.text||'(no statement given)'}</div>
-            <div class="rating-group" data-po="${p.id}">
-              ${['1 - Low','2 - Moderate','3 - High'].map((lab,idx)=>`<div class="rating-opt" data-val="${idx+1}">${lab}</div>`).join('')}
-            </div>
-          </div>`).join('')}
-        <button type="button" class="btn btn-primary" id="g-submit" style="margin-top:8px;">Submit Survey</button>
-      </form>`}
+      ${subjectCols.length===0 ? '<div class="empty">No subjects/Course Outcomes have been set up for this semester yet — ask the Admin to add them under Academics → Manage Courses and Exit Survey → Survey Parameters.</div>' : `
+      <div class="table-wrap" style="margin-top:14px;">
+        <table id="fill-table">
+          ${renderSubjectGroupHeader(subjectCols, 'Your Response')}
+          <tr>
+            <td>${kind==='student' ? (state.enrollment||'—') : '(fill above, then rate below)'}</td>
+            ${subjectCols.map(sc=> sc.cos.length? sc.cos.map(co=>`<td style="text-align:center;"><select data-co="${sc.course.id}::${co.id}"><option value="">—</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></td>`).join('') : `<td>—</td>`).join('')}
+          </tr>
+        </table>
+      </div>
+      <button class="btn btn-primary" id="fill-submit" style="margin-top:14px;">Submit Survey</button>`}
     </div>
   `;
-  c.querySelectorAll('.rating-group').forEach(g=>{
-    g.querySelectorAll('.rating-opt').forEach(o=>o.addEventListener('click', ()=>{
-      g.querySelectorAll('.rating-opt').forEach(x=>x.classList.remove('sel'));
-      o.classList.add('sel');
-    }));
-  });
-  const submitBtn = document.getElementById('g-submit');
+
+  const semSel = document.getElementById('fill-sem');
+  if(semSel) semSel.addEventListener('change', e=>{ state.sub['fillSem_'+kind]=parseInt(e.target.value,10); renderStakeholderSurveyFill(kind); });
+
+  const submitBtn = document.getElementById('fill-submit');
   if(submitBtn) submitBtn.addEventListener('click', async ()=>{
-    const name = document.getElementById('g-name') ? document.getElementById('g-name').value.trim() : '';
-    if(!name){ toast('Please enter your name'); return; }
-    let extra = {};
-    if(kind==='parent') extra.student = document.getElementById('g-student').value.trim();
-    if(kind==='industry'){
-      const indSel = document.getElementById('g-industry');
+    let identity = {};
+    if(kind==='student'){
+      if(!state.enrollment){ toast('Your account has no Enrollment Number on file — ask Admin to add one under Manage Users.'); return; }
+      identity = { enrollment: state.enrollment, name: state.name };
+    } else if(kind==='parent'){
+      const name = document.getElementById('fill-name').value.trim();
+      const childEnrollment = document.getElementById('fill-enrollment').value.trim();
+      const childName = document.getElementById('fill-student-name').value.trim();
+      if(!name||!childEnrollment||!childName){ toast("Fill your name, and your child's enrollment number and name"); return; }
+      identity = { name, enrollment: childEnrollment, studentName: childName };
+    } else if(kind==='alumni'){
+      const name = document.getElementById('fill-name').value.trim();
+      const batch = document.getElementById('fill-batch').value.trim();
+      if(!name){ toast('Enter your name'); return; }
+      identity = { name, batch };
+    } else if(kind==='industry'){
+      const indSel = document.getElementById('fill-industry');
       const ind = industries.find(i=>i.id===indSel.value);
-      extra.industry = ind ? ind.name : '';
-      extra.director = ind ? ind.director : '';
+      const name = document.getElementById('fill-name').value.trim();
+      if(!ind || !name){ toast('Select an industry and enter your name'); return; }
+      identity = { name, industry: ind.name, director: ind.director };
     }
-    const ratings={}; let complete=true;
-    c.querySelectorAll('.rating-group').forEach(g=>{
-      const sel=g.querySelector('.rating-opt.sel'); if(!sel) complete=false;
-      ratings[g.dataset.po]= sel?parseInt(sel.dataset.val,10):null;
+
+    const ratings = {};
+    let answered = 0;
+    document.querySelectorAll('#fill-table select[data-co]').forEach(sel=>{
+      if(sel.value){ ratings[sel.dataset.co] = parseInt(sel.value,10); answered++; }
     });
-    if(!complete){ toast('Please rate every parameter'); return; }
-    const key = kind+'_responses';
+    if(answered===0){ toast('Please rate at least one Course Outcome'); return; }
+    if(answered<totalCos && !confirm('Some Course Outcomes are left unrated. Submit anyway?')) return;
+
+    const key = 'co_responses:'+kind+':'+semester;
     const responses = (await sGet(key)) || [];
-    responses.push({id:uid('resp'), name, ...extra, ratings, submittedAt:new Date().toISOString()});
+    responses.push({id:uid('resp'), ...identity, semester, ratings, submittedAt:new Date().toISOString()});
     await sSet(key, responses);
     toast('Survey submitted — thank you!');
-    renderGuestSurvey(kind);
+    renderStakeholderSurveyFill(kind);
   });
 }
 
-/* ======================================================================
-   ADMIN/TEACHER: SURVEY RESPONSES (view / summary)
-   ====================================================================== */
+/* ---------- RESPONSE DISPLAY / REPORT (admin & teacher) ---------- */
 async function renderSurveyResponses(){
   await loadCoursesIfNeeded();
   const c = document.getElementById('content');
-  const activeTab = state.sub.srTab || 'course';
+  const kind = state.sub.srKind || 'student';
+  const sem = state.sub.srSem || 1;
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>Survey Responses</h2><p class="sub">Response counts and average ratings collected so far.</p></div></div>
+    <div class="page-head"><div><h2>Survey Responses</h2><p class="sub">Complete response data, exactly as submitted — searchable, filterable, and exportable.</p></div></div>
     <div class="tabs">
-      <button class="tab-btn ${activeTab==='course'?'active':''}" data-tab="course">Course Exit</button>
-      <button class="tab-btn ${activeTab==='program'?'active':''}" data-tab="program">Program Exit</button>
-      <button class="tab-btn ${activeTab==='parent'?'active':''}" data-tab="parent">Parent</button>
-      <button class="tab-btn ${activeTab==='industry'?'active':''}" data-tab="industry">Industry</button>
-      <button class="tab-btn ${activeTab==='alumni'?'active':''}" data-tab="alumni">Alumni</button>
+      <button class="tab-btn ${kind==='student'?'active':''}" data-kind="student">Student</button>
+      <button class="tab-btn ${kind==='parent'?'active':''}" data-kind="parent">Parent</button>
+      <button class="tab-btn ${kind==='alumni'?'active':''}" data-kind="alumni">Alumni</button>
+      <button class="tab-btn ${kind==='industry'?'active':''}" data-kind="industry">Industry</button>
     </div>
-    <div id="sr-body"></div>
-  `;
-  c.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click', ()=>{ state.sub.srTab=b.dataset.tab; renderSurveyResponses(); }));
-
-  const body = document.getElementById('sr-body');
-  if(activeTab==='course'){
-    if(state.courses.length===0){ body.innerHTML='<div class="empty">No courses yet.</div>'; return; }
-    const selId = state.sub.srCourseId || state.courses[0].id;
-    state.sub.srCourseId = selId;
-    const params = (await sGet('ces_params:'+selId)) || [];
-    const responses = (await sGet('ces_responses:'+selId)) || [];
-    body.innerHTML = `
-      <div class="card">
-        <div class="field" style="max-width:340px;"><label>Course</label>
-          <select id="sr-course-select">${state.courses.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name}</option>`).join('')}</select>
+    <div class="card">
+      <div class="row-flex" style="align-items:flex-end;">
+        <div class="field" style="max-width:160px;"><label>Semester</label>
+          <select id="sr-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${sem===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
         </div>
-        <p class="small-note">${responses.length} response(s) submitted.</p>
-        ${responses.length===0||params.length===0?'':renderAvgTable(params, responses)}
-      </div>`;
-    document.getElementById('sr-course-select').addEventListener('change', e=>{ state.sub.srCourseId=e.target.value; renderSurveyResponses(); });
-  } else {
-    const key = activeTab==='program' ? 'pes_responses' : activeTab+'_responses';
-    const responses = (await sGet(key)) || [];
-    const params = (await sGet('program_params')) || [];
-    body.innerHTML = `<div class="card"><p class="small-note">${responses.length} response(s) submitted.</p>
-      ${responses.length===0||params.length===0?'':renderAvgTable(params, responses)}
-    </div>`;
+        <div class="field" style="flex:1;min-width:200px;"><label>Search (name / enrollment / industry)</label><input id="sr-search" placeholder="Type to filter…"/></div>
+        <button class="btn btn-outline" id="sr-export">Export to Excel</button>
+      </div>
+      <div id="sr-table-holder" style="margin-top:14px;"></div>
+    </div>
+  `;
+  c.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click', ()=>{ state.sub.srKind=b.dataset.kind; renderSurveyResponses(); }));
+  document.getElementById('sr-sem').addEventListener('change', e=>{ state.sub.srSem=parseInt(e.target.value,10); renderSurveyResponses(); });
+
+  const subjectCols = await buildSubjectColumns(sem);
+  const key = 'co_responses:'+kind+':'+sem;
+  const allResponses = (await sGet(key)) || [];
+
+  function draw(filterText){
+    const q = (filterText||'').toLowerCase();
+    const filtered = !q ? allResponses : allResponses.filter(r=>{
+      const hay = [r.name, r.enrollment, r.studentName, r.industry].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+    document.getElementById('sr-table-holder').innerHTML = renderResponseTable(kind, subjectCols, filtered);
   }
+  draw('');
+  document.getElementById('sr-search').addEventListener('input', e=>draw(e.target.value));
+  document.getElementById('sr-export').addEventListener('click', ()=>{
+    exportResponsesToExcel(kind, sem, subjectCols, allResponses);
+  });
 }
 
-function renderAvgTable(params, responses){
-  const rows = params.map(p=>{
-    const vals = responses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
-    const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : 0;
-    return `<tr><td>${p.code}</td><td>${p.text||''}</td><td>${vals.length}</td><td><b>${avg.toFixed(2)} / 3</b></td></tr>`;
-  }).join('');
-  return `<div class="table-wrap"><table><tr><th>Code</th><th>Statement</th><th>Responses</th><th>Average Rating</th></tr>${rows}</table></div>`;
+function flattenCoColumns(subjectCols){
+  const flat = [];
+  subjectCols.forEach(sc=> (sc.cos.length?sc.cos:[null]).forEach(co=> flat.push({course:sc.course, co})) );
+  return flat;
 }
+
+function renderResponseTable(kind, subjectCols, responses){
+  if(subjectCols.length===0) return '<div class="empty">No subjects/COs defined for this semester yet.</div>';
+  if(responses.length===0) return '<div class="empty">No responses submitted yet.</div>';
+  const flatCos = flattenCoColumns(subjectCols);
+  const header = renderSubjectGroupHeader(subjectCols, 'Respondent');
+  const rows = responses.map(r=>`<tr><td>${identityLabel(kind,r)}</td>${flatCos.map(fc=>{
+    if(!fc.co) return '<td>—</td>';
+    const v = r.ratings[fc.course.id+'::'+fc.co.id];
+    return `<td style="text-align:center;">${v!=null?v:''}</td>`;
+  }).join('')}</tr>`).join('');
+  const avgRow = `<tr style="font-weight:700;background:#fbf6ec;"><td>AVERAGE</td>${flatCos.map(fc=>{
+    if(!fc.co) return '<td>—</td>';
+    const vals = responses.map(r=>r.ratings[fc.course.id+'::'+fc.co.id]).filter(v=>v!=null);
+    const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : 0;
+    return `<td style="text-align:center;">${vals.length?avg.toFixed(2):'—'}</td>`;
+  }).join('')}</tr>`;
+  return `<div class="table-wrap"><table>${header}${rows}${avgRow}</table></div><p class="small-note">${responses.length} response(s) shown.</p>`;
+}
+
+function exportResponsesToExcel(kind, sem, subjectCols, responses){
+  if(subjectCols.length===0 || responses.length===0){ toast('Nothing to export'); return; }
+  const flatCos = flattenCoColumns(subjectCols);
+  const headerRow1 = ['Identity', ...flatCos.map(fc=>fc.course.code)];
+  const headerRow2 = ['', ...flatCos.map(fc=>fc.co?fc.co.code:'')];
+  const dataRows = responses.map(r=>[identityLabel(kind,r), ...flatCos.map(fc=> fc.co ? (r.ratings[fc.course.id+'::'+fc.co.id] ?? '') : '')]);
+  const avgRow = ['AVERAGE', ...flatCos.map(fc=>{
+    if(!fc.co) return '';
+    const vals = responses.map(r=>r.ratings[fc.course.id+'::'+fc.co.id]).filter(v=>v!=null);
+    return vals.length ? Number((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3)) : '';
+  })];
+  const aoa = [headerRow1, headerRow2, ...dataRows, avgRow];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Responses');
+  XLSX.writeFile(wb, `${kind}_survey_sem${sem}.xlsx`);
+}
+
 
 /* ======================================================================
    ADMIN/TEACHER: RESULT SHEETS (per semester tabs, upload)
@@ -1212,11 +1314,25 @@ async function renderAttainment(){
   if(state.courses.length===0){ c.innerHTML = `<div class="crumb">Academics</div><h2>Attainment Calculation</h2><div class="empty">Add courses first.</div>`; return; }
   const selId = state.sub.attCourseId || state.courses[0].id;
   state.sub.attCourseId = selId;
+  const course = state.courses.find(x=>x.id===selId);
   const saved = (await sGet('attainment:'+selId)) || {benchmark:50, totalStudents:0, internalAbove:0, externalAbove:0};
   const cos = (await sGet('ces_params:'+selId)) || [];
-  const surveyResponses = (await sGet('ces_responses:'+selId)) || [];
   const mapping = (await sGet('copo:'+selId)) || {};
   const pos = (await sGet('program_params')) || [];
+
+  // Indirect attainment source: this course's COs, rated by Student / Parent / Alumni /
+  // Industry surveys for the course's semester (equal-weighted across the 4 groups that
+  // actually have responses — a group with zero responses doesn't drag the average down).
+  const stakeholderKinds = ['student','parent','alumni','industry'];
+  const byStakeholder = {};
+  for(const kind of stakeholderKinds){
+    const responses = (await sGet('co_responses:'+kind+':'+course.semester)) || [];
+    const vals = [];
+    cos.forEach(co=>{
+      responses.forEach(r=>{ const v = r.ratings[course.id+'::'+co.id]; if(v!=null) vals.push(v); });
+    });
+    byStakeholder[kind] = {count: responses.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
+  }
 
   c.innerHTML = `
     <div class="crumb">Academics</div>
@@ -1228,8 +1344,10 @@ async function renderAttainment(){
     <div class="assumption-box">
       This calculator follows the method in your uploaded sheet: a benchmark % converted to an
       attainment Level (0&ndash;3), Direct Attainment = 80% External Level + 20% Internal Level,
-      Indirect Attainment = average student rating from the Course Exit Survey, Final Attainment
-      = 80% Direct + 20% Indirect, then spread to PO/PSO using the CO&ndash;PO mapping strength.
+      Indirect Attainment = the equal-weighted average of the Student, Parent, Alumni and Industry
+      Course Exit Survey ratings for this course's Course Outcomes (a stakeholder group with no
+      responses yet is simply left out, not counted as zero), Final Attainment = 80% Direct + 20%
+      Indirect, then spread to PO/PSO using the CO&ndash;PO mapping strength.
       Adjust the weightings in code if your institute's exact formula differs.
     </div>
 
@@ -1255,10 +1373,10 @@ async function renderAttainment(){
     const extAbove = parseFloat(document.getElementById('att-external-above').value)||0;
     const payload = {benchmark, totalStudents:total, internalAbove:intAbove, externalAbove:extAbove};
     await sSet('attainment:'+selId, payload);
-    renderAttainmentResults(payload, cos, surveyResponses, mapping, pos);
+    renderAttainmentResults(payload, cos, byStakeholder, mapping, pos);
   });
 
-  if(saved.totalStudents>0){ renderAttainmentResults(saved, cos, surveyResponses, mapping, pos); }
+  if(saved.totalStudents>0){ renderAttainmentResults(saved, cos, byStakeholder, mapping, pos); }
 }
 
 function levelFromPct(pct){
@@ -1269,7 +1387,7 @@ function levelFromPct(pct){
 }
 function levelClass(l){ return 'lvl-'+l; }
 
-function renderAttainmentResults(inputs, cos, surveyResponses, mapping, pos){
+function renderAttainmentResults(inputs, cos, byStakeholder, mapping, pos){
   const box = document.getElementById('att-results');
   const total = inputs.totalStudents || 0;
   const intPct = total>0 ? (inputs.internalAbove/total*100) : 0;
@@ -1278,12 +1396,9 @@ function renderAttainmentResults(inputs, cos, surveyResponses, mapping, pos){
   const extLevel = levelFromPct(extPct);
   const direct = 0.8*extLevel + 0.2*intLevel;
 
-  // indirect attainment: average of all CO ratings across all survey responses (1-3 scale)
-  let allVals = [];
-  cos.forEach(co=>{
-    surveyResponses.forEach(r=>{ if(r.ratings[co.id]!=null) allVals.push(r.ratings[co.id]); });
-  });
-  const indirect = allVals.length ? (allVals.reduce((a,b)=>a+b,0)/allVals.length) : 0;
+  // indirect attainment: equal-weighted average across the stakeholder groups that have data
+  const present = ['student','parent','alumni','industry'].map(k=>byStakeholder[k]).filter(g=>g.avg!=null);
+  const indirect = present.length ? (present.reduce((a,g)=>a+g.avg,0)/present.length) : 0;
   const final = 0.8*direct + 0.2*indirect;
 
   // PO/PSO attainment
@@ -1297,6 +1412,8 @@ function renderAttainmentResults(inputs, cos, surveyResponses, mapping, pos){
     return {code:p.code, text:p.text, value:poAtt};
   });
 
+  const stakeholderLabels = {student:'Student', parent:'Parent', alumni:'Alumni', industry:'Industry'};
+
   box.innerHTML = `
     <div class="card">
       <h3>2 &middot; Direct Attainment</h3>
@@ -1309,9 +1426,15 @@ function renderAttainmentResults(inputs, cos, surveyResponses, mapping, pos){
       <p><b>Direct Attainment</b> = 0.8 × ${extLevel} + 0.2 × ${intLevel} = <b>${direct.toFixed(2)}</b> / 3</p>
     </div>
     <div class="card">
-      <h3>3 &middot; Indirect Attainment (Course Exit Survey)</h3>
-      <p class="small-note">${surveyResponses.length} student response(s) considered, across ${cos.length} Course Outcome(s).</p>
-      <p><b>Indirect Attainment</b> (average student rating) = <b>${indirect.toFixed(2)}</b> / 3</p>
+      <h3>3 &middot; Indirect Attainment (Student + Parent + Alumni + Industry Exit Surveys)</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Stakeholder</th><th>Responses</th><th>Average Rating</th></tr>
+        ${['student','parent','alumni','industry'].map(k=>{
+          const g = byStakeholder[k];
+          return `<tr><td>${stakeholderLabels[k]}</td><td>${g.count}</td><td>${g.avg!=null?g.avg.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <p style="margin-top:10px;"><b>Indirect Attainment</b> (equal-weighted average of the groups with data) = <b>${indirect.toFixed(2)}</b> / 3</p>
     </div>
     <div class="card">
       <h3>4 &middot; Final Course Attainment</h3>
