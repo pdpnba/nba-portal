@@ -506,10 +506,10 @@ async function renderView(view){
     'copo': renderCopo,
     'attainment': renderAttainment,
     'ces-fill': ()=>renderStakeholderSurveyFill('student'),
-    'pes-fill': renderProgramExitSurveyFill,
-    'guest-parent': ()=>renderStakeholderSurveyFill('parent'),
-    'guest-industry': ()=>renderStakeholderSurveyFill('industry'),
-    'guest-alumni': ()=>renderStakeholderSurveyFill('alumni'),
+    'pes-fill': ()=>renderPOSurveyFill('program'),
+    'guest-parent': ()=>renderPOSurveyFill('parent'),
+    'guest-industry': ()=>renderPOSurveyFill('industry'),
+    'guest-alumni': ()=>renderPOSurveyFill('alumni'),
   };
   if(renderers[view]) await renderers[view]();
   else c.innerHTML = `<div class="empty">Not found</div>`;
@@ -1025,71 +1025,37 @@ function identityLabel(kind, r){
   return r.name||'';
 }
 
-const stakeholderTitles = {student:'Course Exit Survey', parent:'Parent Feedback Survey', industry:'Industry Feedback Survey', alumni:'Alumni Feedback Survey'};
+const stakeholderTitles = {student:'Course Exit Survey'};
 
-/* ---------- FILL FORM (used by student / parent / alumni / industry) ---------- */
+/* ---------- FILL FORM: Course Exit Survey (student only, CO-wise, once per semester) ---------- */
 async function renderStakeholderSurveyFill(kind){
   const c = document.getElementById('content');
   await loadCoursesIfNeeded();
 
-  const semester = kind==='student' ? (state.semester || 1) : (state.sub['fillSem_'+kind] || 1);
+  const semester = state.semester || 1;
   const subjectCols = await buildSubjectColumns(semester);
   const totalCos = subjectCols.reduce((n,sc)=>n+(sc.cos.length||0),0);
 
   // A student may fill the Course Exit Survey for a given semester only once.
-  if(kind==='student'){
-    const key = 'co_responses:'+kind+':'+semester;
-    const responses = (await sGet(key)) || [];
-    const already = state.enrollment ? responses.find(r=>r.enrollment===state.enrollment) : null;
-    if(already){
-      c.innerHTML = `
-        <div class="crumb">Exit Survey</div>
-        <div class="page-head"><div><h2>${stakeholderTitles[kind]}</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
-        <div class="card">
-          <div class="empty">You have already submitted the Course Exit Survey for Semester ${semester} on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once per semester.</div>
-        </div>
-      `;
-      return;
-    }
-  }
-
-  let industries = [];
-  if(kind==='industry') industries = (await sGet('industries')) || [];
-
-  const semSelector = kind==='student' ? '' : `
-    <div class="field" style="max-width:220px;"><label>Semester (subjects being rated)</label>
-      <select id="fill-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${semester===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
-    </div>`;
-
-  let identityFields = '';
-  if(kind==='student'){
-    identityFields = `<p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name} &middot; Semester ${semester}</p>`;
-  } else if(kind==='parent'){
-    identityFields = `<div class="row-flex">
-      <div class="field"><label>Your Name (Parent)</label><input id="fill-name"/></div>
-      <div class="field"><label>Child's Enrollment Number</label><input id="fill-enrollment"/></div>
-      <div class="field"><label>Child's Name</label><input id="fill-student-name"/></div>
-    </div>`;
-  } else if(kind==='alumni'){
-    identityFields = `<div class="row-flex">
-      <div class="field"><label>Your Name (Alumni)</label><input id="fill-name"/></div>
-      <div class="field"><label>Passing / Batch Year</label><input id="fill-batch"/></div>
-    </div>`;
-  } else if(kind==='industry'){
-    identityFields = `<div class="row-flex">
-      <div class="field"><label>Select Industry</label>
-        <select id="fill-industry">${industries.length===0?'<option value="">No industries added by admin yet</option>':industries.map(i=>`<option value="${i.id}">${i.name} — ${i.director}</option>`).join('')}</select>
+  const key = 'co_responses:student:'+semester;
+  const responses = (await sGet(key)) || [];
+  const already = state.enrollment ? responses.find(r=>r.enrollment===state.enrollment) : null;
+  if(already){
+    c.innerHTML = `
+      <div class="crumb">Exit Survey</div>
+      <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+      <div class="card">
+        <div class="empty">You have already submitted the Course Exit Survey for Semester ${semester} on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once per semester.</div>
       </div>
-      <div class="field"><label>Your Name (Representative)</label><input id="fill-name"/></div>
-    </div>`;
+    `;
+    return;
   }
 
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>${stakeholderTitles[kind]}</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+    <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
     <div class="card">
-      ${semSelector}
-      ${identityFields}
+      <p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name} &middot; Semester ${semester}</p>
       ${subjectCols.length===0 ? '<div class="empty">No subjects/Course Outcomes have been set up for this semester yet — ask the Admin to add them under Academics → Manage Courses and Exit Survey → Survey Parameters.</div>' : `
       <div class="card" style="background:#fbf6ec;margin-top:14px;">
         <h3 style="margin-top:0;">Course Outcome (CO) statements</h3>
@@ -1103,7 +1069,7 @@ async function renderStakeholderSurveyFill(kind){
         <table id="fill-table">
           ${renderSubjectGroupHeader(subjectCols, 'Your Response')}
           <tr>
-            <td>${kind==='student' ? (state.enrollment||'—') : '(fill above, then rate below)'}</td>
+            <td>${state.enrollment||'—'}</td>
             ${subjectCols.map(sc=> sc.cos.length? sc.cos.map(co=>`<td style="text-align:center;"><select data-co="${sc.course.id}::${co.id}"><option value="">—</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></td>`).join('') : `<td>—</td>`).join('')}
           </tr>
         </table>
@@ -1112,13 +1078,111 @@ async function renderStakeholderSurveyFill(kind){
     </div>
   `;
 
-  const semSel = document.getElementById('fill-sem');
-  if(semSel) semSel.addEventListener('change', e=>{ state.sub['fillSem_'+kind]=parseInt(e.target.value,10); renderStakeholderSurveyFill(kind); });
-
   const submitBtn = document.getElementById('fill-submit');
   if(submitBtn) submitBtn.addEventListener('click', async ()=>{
+    if(!state.enrollment){ toast('Your account has no Enrollment Number on file — ask Admin to add one under Manage Users.'); return; }
+    const identity = { enrollment: state.enrollment, name: state.name };
+
+    const ratings = {};
+    let answered = 0;
+    document.querySelectorAll('#fill-table select[data-co]').forEach(sel=>{
+      if(sel.value){ ratings[sel.dataset.co] = parseInt(sel.value,10); answered++; }
+    });
+    if(answered===0){ toast('Please rate at least one Course Outcome'); return; }
+    if(answered<totalCos && !confirm('Some Course Outcomes are left unrated. Submit anyway?')) return;
+
+    const fresh = (await sGet(key)) || [];
+    if(fresh.some(r=>r.enrollment===identity.enrollment)){
+      toast('You have already submitted the Course Exit Survey for this semester.');
+      renderStakeholderSurveyFill(kind);
+      return;
+    }
+    fresh.push({id:uid('resp'), ...identity, semester, ratings, submittedAt:new Date().toISOString()});
+    await sSet(key, fresh);
+    toast('Survey submitted — thank you!');
+    renderStakeholderSurveyFill(kind);
+  });
+}
+
+/* ---------- PO/PSO-WISE SURVEY (Program Exit / Parent / Alumni / Industry) ----------
+   Per the institute's format, Parent, Industry and Alumni feedback is collected at the
+   Program Outcome / PSO level only (not per-Course-Outcome). The Program Exit Survey
+   (filled by students, once each) uses the same PO/PSO rating grid. All four feed PO/PSO
+   indirect attainment; none of them feed course-level (CO) indirect attainment any more. */
+const poSurveyConfig = {
+  program: { title:'Program Exit Survey', once:true },
+  parent: { title:'Parent Feedback Survey', once:false },
+  alumni: { title:'Alumni Feedback Survey', once:false },
+  industry: { title:'Industry Feedback Survey', once:false },
+};
+
+function poIdentityFieldsHtml(kind, industries){
+  if(kind==='program') return '';
+  if(kind==='parent') return `<div class="row-flex">
+    <div class="field"><label>Your Name (Parent)</label><input id="fill-name"/></div>
+    <div class="field"><label>Child's Enrollment Number</label><input id="fill-enrollment"/></div>
+    <div class="field"><label>Child's Name</label><input id="fill-student-name"/></div>
+  </div>`;
+  if(kind==='alumni') return `<div class="row-flex">
+    <div class="field"><label>Your Name (Alumni)</label><input id="fill-name"/></div>
+    <div class="field"><label>Passing / Batch Year</label><input id="fill-batch"/></div>
+  </div>`;
+  if(kind==='industry') return `<div class="row-flex">
+    <div class="field"><label>Select Industry</label>
+      <select id="fill-industry">${industries.length===0?'<option value="">No industries added by admin yet</option>':industries.map(i=>`<option value="${i.id}">${i.name} — ${i.director}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Your Name (Representative)</label><input id="fill-name"/></div>
+  </div>`;
+  return '';
+}
+
+async function renderPOSurveyFill(kind){
+  const c = document.getElementById('content');
+  const cfg = poSurveyConfig[kind];
+  const pos = (await sGet('program_params')) || [];
+  const key = 'po_responses:'+kind;
+  const responses = (await sGet(key)) || [];
+  let industries = [];
+  if(kind==='industry') industries = (await sGet('industries')) || [];
+
+  if(cfg.once){
+    const already = state.enrollment ? responses.find(r=>r.enrollment===state.enrollment) : null;
+    if(already){
+      c.innerHTML = `
+        <div class="crumb">Exit Survey</div>
+        <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+        <div class="card"><div class="empty">You have already submitted the ${cfg.title} on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once.</div></div>
+      `;
+      return;
+    }
+  }
+
+  c.innerHTML = `
+    <div class="crumb">Exit Survey</div>
+    <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+    <div class="card">
+      ${kind==='program' ? `<p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name}</p>` : poIdentityFieldsHtml(kind, industries)}
+      ${pos.length===0 ? '<div class="empty">No Program Outcomes / PSOs have been set up yet — ask the Admin to add them under Exit Survey → Survey Parameters → Program / Parent / Industry / Alumni.</div>' : `
+      <div class="card" style="background:#fbf6ec;margin-top:14px;">
+        <h3 style="margin-top:0;">Program Outcome (PO) / PSO statements</h3>
+        <ul style="margin:0 0 0 20px;padding:0;">
+          ${pos.map(p=>`<li><b>${p.code}:</b> ${p.text||'<span class="small-note">(no statement provided)</span>'}</li>`).join('')}
+        </ul>
+      </div>
+      <div class="table-wrap" style="margin-top:14px;">
+        <table id="pos-table">
+          <tr><th>Code</th><th>Statement</th><th style="text-align:center;">Rating</th></tr>
+          ${pos.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.text||''}</td><td style="text-align:center;"><select data-po="${p.id}"><option value="">—</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></td></tr>`).join('')}
+        </table>
+      </div>
+      <button class="btn btn-primary" id="pos-submit" style="margin-top:14px;">Submit Survey</button>`}
+    </div>
+  `;
+
+  const submitBtn = document.getElementById('pos-submit');
+  if(submitBtn) submitBtn.addEventListener('click', async ()=>{
     let identity = {};
-    if(kind==='student'){
+    if(kind==='program'){
       if(!state.enrollment){ toast('Your account has no Enrollment Number on file — ask Admin to add one under Manage Users.'); return; }
       identity = { enrollment: state.enrollment, name: state.name };
     } else if(kind==='parent'){
@@ -1142,88 +1206,22 @@ async function renderStakeholderSurveyFill(kind){
 
     const ratings = {};
     let answered = 0;
-    document.querySelectorAll('#fill-table select[data-co]').forEach(sel=>{
-      if(sel.value){ ratings[sel.dataset.co] = parseInt(sel.value,10); answered++; }
-    });
-    if(answered===0){ toast('Please rate at least one Course Outcome'); return; }
-    if(answered<totalCos && !confirm('Some Course Outcomes are left unrated. Submit anyway?')) return;
-
-    const key = 'co_responses:'+kind+':'+semester;
-    const responses = (await sGet(key)) || [];
-    if(kind==='student' && responses.some(r=>r.enrollment===identity.enrollment)){
-      toast('You have already submitted the Course Exit Survey for this semester.');
-      renderStakeholderSurveyFill(kind);
-      return;
-    }
-    responses.push({id:uid('resp'), ...identity, semester, ratings, submittedAt:new Date().toISOString()});
-    await sSet(key, responses);
-    toast('Survey submitted — thank you!');
-    renderStakeholderSurveyFill(kind);
-  });
-}
-
-/* ---------- PROGRAM EXIT SURVEY (student only, PO/PSO-wise, once per student) ---------- */
-async function renderProgramExitSurveyFill(){
-  const c = document.getElementById('content');
-  const pos = (await sGet('program_params')) || [];
-  const key = 'po_responses:program';
-  const responses = (await sGet(key)) || [];
-  const already = state.enrollment ? responses.find(r=>r.enrollment===state.enrollment) : null;
-
-  if(already){
-    c.innerHTML = `
-      <div class="crumb">Exit Survey</div>
-      <div class="page-head"><div><h2>Program Exit Survey</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
-      <div class="card">
-        <div class="empty">You have already submitted the Program Exit Survey on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once.</div>
-      </div>
-    `;
-    return;
-  }
-
-  c.innerHTML = `
-    <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>Program Exit Survey</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
-    <div class="card">
-      <p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name}</p>
-      ${pos.length===0 ? '<div class="empty">No Program Outcomes / PSOs have been set up yet — ask the Admin to add them under Exit Survey → Survey Parameters → Program / Parent / Industry / Alumni.</div>' : `
-      <div class="card" style="background:#fbf6ec;">
-        <h3 style="margin-top:0;">Program Outcome (PO) / PSO statements</h3>
-        <ul style="margin:0 0 0 20px;padding:0;">
-          ${pos.map(p=>`<li><b>${p.code}:</b> ${p.text||'<span class="small-note">(no statement provided)</span>'}</li>`).join('')}
-        </ul>
-      </div>
-      <div class="table-wrap" style="margin-top:14px;">
-        <table id="pes-table">
-          <tr><th>Code</th><th>Statement</th><th style="text-align:center;">Rating</th></tr>
-          ${pos.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.text||''}</td><td style="text-align:center;"><select data-po="${p.id}"><option value="">—</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></td></tr>`).join('')}
-        </table>
-      </div>
-      <button class="btn btn-primary" id="pes-submit" style="margin-top:14px;">Submit Survey</button>`}
-    </div>
-  `;
-
-  const submitBtn = document.getElementById('pes-submit');
-  if(submitBtn) submitBtn.addEventListener('click', async ()=>{
-    if(!state.enrollment){ toast('Your account has no Enrollment Number on file — ask Admin to add one under Manage Users.'); return; }
-    const ratings = {};
-    let answered = 0;
-    document.querySelectorAll('#pes-table select[data-po]').forEach(sel=>{
+    document.querySelectorAll('#pos-table select[data-po]').forEach(sel=>{
       if(sel.value){ ratings[sel.dataset.po] = parseInt(sel.value,10); answered++; }
     });
     if(answered===0){ toast('Please rate at least one Program Outcome / PSO'); return; }
     if(answered<pos.length && !confirm('Some Program Outcomes / PSOs are left unrated. Submit anyway?')) return;
 
     const fresh = (await sGet(key)) || [];
-    if(fresh.some(r=>r.enrollment===state.enrollment)){
-      toast('You have already submitted the Program Exit Survey.');
-      renderProgramExitSurveyFill();
+    if(cfg.once && fresh.some(r=>r.enrollment===identity.enrollment)){
+      toast(`You have already submitted the ${cfg.title}.`);
+      renderPOSurveyFill(kind);
       return;
     }
-    fresh.push({id:uid('resp'), enrollment: state.enrollment, name: state.name, ratings, submittedAt:new Date().toISOString()});
+    fresh.push({id:uid('resp'), ...identity, ratings, submittedAt:new Date().toISOString()});
     await sSet(key, fresh);
-    toast('Program Exit Survey submitted — thank you!');
-    renderProgramExitSurveyFill();
+    toast(`${cfg.title} submitted — thank you!`);
+    renderPOSurveyFill(kind);
   });
 }
 
@@ -1245,7 +1243,7 @@ async function renderSurveyResponses(){
     </div>
     <div class="card">
       <div class="row-flex" style="align-items:flex-end;">
-        ${kind!=='program' ? `<div class="field" style="max-width:160px;"><label>Semester</label>
+        ${kind==='student' ? `<div class="field" style="max-width:160px;"><label>Semester</label>
           <select id="sr-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${sem===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
         </div>` : ''}
         <div class="field" style="flex:1;min-width:200px;"><label>Search (name / enrollment / industry)</label><input id="sr-search" placeholder="Type to filter…"/></div>
@@ -1259,10 +1257,12 @@ async function renderSurveyResponses(){
   const semSel = document.getElementById('sr-sem');
   if(semSel) semSel.addEventListener('change', e=>{ state.sub.srSem=parseInt(e.target.value,10); renderSurveyResponses(); });
 
-  const isProgram = kind==='program';
-  const pos = isProgram ? ((await sGet('program_params')) || []) : [];
-  const subjectCols = isProgram ? [] : await buildSubjectColumns(sem);
-  const key = isProgram ? 'po_responses:program' : ('co_responses:'+kind+':'+sem);
+  // Student = Course Exit Survey (CO-wise, per semester). Program/Parent/Alumni/Industry are
+  // all PO/PSO-wise (Parent, Alumni and Industry now rate Program Outcomes only, not COs).
+  const isCoWise = kind==='student';
+  const pos = !isCoWise ? ((await sGet('program_params')) || []) : [];
+  const subjectCols = isCoWise ? await buildSubjectColumns(sem) : [];
+  const key = isCoWise ? ('co_responses:'+kind+':'+sem) : ('po_responses:'+kind);
   const allResponses = (await sGet(key)) || [];
 
   function draw(filterText){
@@ -1271,19 +1271,19 @@ async function renderSurveyResponses(){
       const hay = [r.name, r.enrollment, r.studentName, r.industry].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(q);
     });
-    document.getElementById('sr-table-holder').innerHTML = isProgram
-      ? renderProgramResponseTable(pos, filtered)
-      : renderResponseTable(kind, subjectCols, filtered);
+    document.getElementById('sr-table-holder').innerHTML = isCoWise
+      ? renderResponseTable(kind, subjectCols, filtered)
+      : renderProgramResponseTable(pos, filtered);
   }
   draw('');
   document.getElementById('sr-search').addEventListener('input', e=>draw(e.target.value));
   document.getElementById('sr-export').addEventListener('click', ()=>{
-    if(isProgram) exportProgramResponsesToExcel(pos, allResponses);
-    else exportResponsesToExcel(kind, sem, subjectCols, allResponses);
+    if(isCoWise) exportResponsesToExcel(kind, sem, subjectCols, allResponses);
+    else exportProgramResponsesToExcel(pos, allResponses, kind);
   });
   document.getElementById('sr-delete-all').addEventListener('click', async ()=>{
     if(allResponses.length===0){ toast('There are no responses to delete.'); return; }
-    if(!confirm(`Delete all ${allResponses.length} response(s) for ${isProgram?'the Program Exit Survey':(kind+' — Semester '+sem)}? This cannot be undone.`)) return;
+    if(!confirm(`Delete all ${allResponses.length} response(s) for ${isCoWise?(kind+' — Semester '+sem):kind}? This cannot be undone.`)) return;
     await sDelete(key);
     toast('All responses deleted');
     renderSurveyResponses();
@@ -1294,7 +1294,7 @@ function renderProgramResponseTable(pos, responses){
   if(pos.length===0) return '<div class="empty">No Program Outcomes / PSOs defined yet.</div>';
   if(responses.length===0) return '<div class="empty">No responses submitted yet.</div>';
   const header = `<tr><th>Respondent</th>${pos.map(p=>`<th style="text-align:center;">${p.code}</th>`).join('')}</tr>`;
-  const rows = responses.map(r=>`<tr><td>${r.enrollment?(r.enrollment+' — '+r.name):r.name}</td>${pos.map(p=>{
+  const rows = responses.map(r=>`<tr><td>${r.enrollment?(r.enrollment+' — '+r.name):(r.industry?(r.name+' — '+r.industry):r.name)}</td>${pos.map(p=>{
     const v = r.ratings[p.id];
     return `<td style="text-align:center;">${v!=null?v:''}</td>`;
   }).join('')}</tr>`).join('');
@@ -1306,10 +1306,10 @@ function renderProgramResponseTable(pos, responses){
   return `<div class="table-wrap"><table>${header}${rows}${avgRow}</table></div><p class="small-note">${responses.length} response(s) shown.</p>`;
 }
 
-function exportProgramResponsesToExcel(pos, responses){
+function exportProgramResponsesToExcel(pos, responses, kind){
   if(pos.length===0 || responses.length===0){ toast('Nothing to export'); return; }
-  const headerRow = ['Enrollment', 'Name', ...pos.map(p=>p.code)];
-  const dataRows = responses.map(r=>[r.enrollment||'', r.name||'', ...pos.map(p=>r.ratings[p.id] ?? '')]);
+  const headerRow = ['Enrollment/Industry', 'Name', ...pos.map(p=>p.code)];
+  const dataRows = responses.map(r=>[r.enrollment||r.industry||'', r.name||'', ...pos.map(p=>r.ratings[p.id] ?? '')]);
   const avgRow = ['', 'AVERAGE', ...pos.map(p=>{
     const vals = responses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
     return vals.length ? Number((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3)) : '';
@@ -1317,8 +1317,8 @@ function exportProgramResponsesToExcel(pos, responses){
   const aoa = [headerRow, ...dataRows, avgRow];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Program Exit Responses');
-  XLSX.writeFile(wb, `program_exit_survey.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, (kind||'program')+' Responses');
+  XLSX.writeFile(wb, `${kind||'program'}_survey_responses.xlsx`);
 }
 
 function flattenCoColumns(subjectCols){
@@ -1538,23 +1538,45 @@ function renderCopoGrid(cos,pos,mapping){
 
 /* ======================================================================
    ADMIN/TEACHER: ATTAINMENT CALCULATION
-   - Benchmark % → Level (>=80%→3, >=70%→2, >=60%→1, else 0), for Internal & External separately
-   - Direct Attainment = 0.8 × External(SA) Level + 0.2 × Internal(FA+SLA) Level
-     The Internal/External "# students at/above benchmark" counts are read straight from the
-     uploaded Result Sheet for the course's semester (map the marks column(s) once per course;
-     the mapping is remembered). Manual entry/override is still available for institutes that
-     don't upload a result sheet, or want to correct the auto-read numbers.
-   - Indirect (course level) = equal-weighted average of the Course Exit(student) / Parent /
-     Alumni / Industry survey ratings of this course's COs.
+   Matches the institute's own Attainment Calculation format (as supplied):
+   - INTERNAL and EXTERNAL marks are read straight from the uploaded Result
+     Sheet. Every column of the sheet is selectable — nothing is limited to
+     one "Internal" and one "External" column. Typical components are
+     FA-TH, FA-PR, SLA (Internal) and SA-TH, SA-PR (External), but any
+     column can be tagged Internal / External / Ignore, and as many columns
+     as apply can be tagged into each group (e.g. a practical subject may
+     have 3 Internal columns and 2 External columns; a theory-only subject
+     may have just 1 of each).
+   - Each tagged column gets its own attainment Level (0-3) from the % of
+     students scoring ≥ benchmark in that column; Internal Level = average
+     of the Internal columns' levels, External Level = average of the
+     External columns' levels (component groups with no column keep the
+     manual-entry level below).
+   - Direct Attainment = 0.8 × External Level + 0.2 × Internal Level
+   - Indirect Attainment (course level) = average CO rating from the
+     Course Exit (student) Survey ONLY — Parent / Alumni / Industry surveys
+     are PO/PSO-level only (see below) and no longer feed course-level
+     indirect attainment.
    - Final Course Attainment = 0.8 × Direct + 0.2 × Indirect
-   - PO/PSO Attainment = direct-from-CO-mapping (80%) blended with indirect-from-Program-Exit-
-     Survey ratings for that PO/PSO (20%), matching the same 80/20 direct/indirect split used
-     at course level, applied at the PO/PSO level using whichever surveys have data.
-   NOTE: no separate "ATTAINMENT CALCULATION" reference document was supplied with this request,
-   so the exact weightings above are the best-practice NBA convention (80/20 direct/indirect,
-   80/20 external/internal). Adjust the weighting constants below if your institute's approved
-   formula differs.
+   - CO→PO/PSO Attainment = Σ(CO Attainment × mapping strength) / (3 ×
+     number of COs mapped to that PO), i.e. "Attainment of relevant COs ×
+     Actual mapping strength / Maximum mapping strength" — each CO's own
+     attainment is the course's Direct Attainment blended with that
+     specific CO's own indirect (Course Exit Survey) rating, so different
+     COs under the same course can attain differently.
+   - Final PO/PSO Attainment = that CO-based (direct) PO value blended
+     80/20 with the PO/PSO's own indirect rating, which is the equal-
+     weighted average of the Program Exit, Parent, Alumni and Industry
+     surveys (whichever of those four have responses).
    ====================================================================== */
+const ATTAINMENT_COMPONENT_ROLES = ['ignore','internal','external'];
+function guessComponentRole(header){
+  const h = String(header||'').toLowerCase();
+  if(/\b(fa|sla|internal|ia|cie)\b/.test(h)) return 'internal';
+  if(/\b(sa|ese|external|university|univ)\b/.test(h)) return 'external';
+  return 'ignore';
+}
+
 async function renderAttainment(){
   await loadCoursesIfNeeded();
   const c = document.getElementById('content');
@@ -1562,36 +1584,43 @@ async function renderAttainment(){
   const selId = state.sub.attCourseId || state.courses[0].id;
   state.sub.attCourseId = selId;
   const course = state.courses.find(x=>x.id===selId);
-  const saved = (await sGet('attainment:'+selId)) || {benchmark:50, totalStudents:0, internalAbove:0, externalAbove:0};
-  const colMap = (await sGet('attainment_colmap:'+selId)) || {intCol:'', intMaxCol:'', intMax:'', extCol:'', extMaxCol:'', extMax:''};
+  const saved = (await sGet('attainment:'+selId)) || {benchmark:50, manualInternalLevel:0, manualExternalLevel:0};
+  const colMap = (await sGet('attainment_colmap:'+selId)) || {benchmark:50, roles:{}};
   const cos = (await sGet('ces_params:'+selId)) || [];
   const mapping = (await sGet('copo:'+selId)) || {};
   const pos = (await sGet('program_params')) || [];
   const resultSheet = await sGet('result_sem:'+course.semester);
 
-  // Indirect attainment source (course/CO level): Course Exit(student) / Parent / Alumni /
-  // Industry surveys for the course's semester (equal-weighted across the groups that
-  // actually have responses — a group with zero responses doesn't drag the average down).
-  const stakeholderKinds = ['student','parent','alumni','industry'];
-  const byStakeholder = {};
-  for(const kind of stakeholderKinds){
-    const responses = (await sGet('co_responses:'+kind+':'+course.semester)) || [];
-    const vals = [];
-    cos.forEach(co=>{
-      responses.forEach(r=>{ const v = r.ratings[course.id+'::'+co.id]; if(v!=null) vals.push(v); });
-    });
-    byStakeholder[kind] = {count: responses.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
-  }
+  // Indirect attainment source (course/CO level): the Course Exit (student) Survey ONLY.
+  // Also captured per-CO so PO attainment can use each CO's own indirect rating.
+  const studentResponses = (await sGet('co_responses:student:'+course.semester)) || [];
+  const coIndirect = {}; // co.id -> {count, avg}
+  cos.forEach(co=>{
+    const vals = studentResponses.map(r=>r.ratings[course.id+'::'+co.id]).filter(v=>v!=null);
+    coIndirect[co.id] = {count: vals.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
+  });
+  const overallVals = cos.map(co=>coIndirect[co.id].avg).filter(v=>v!=null);
+  const courseIndirect = {count: studentResponses.length, avg: overallVals.length ? (overallVals.reduce((a,b)=>a+b,0)/overallVals.length) : null};
 
-  // Indirect attainment source (PO/PSO level): the Program Exit Survey, rated directly per PO/PSO.
-  const programResponses = (await sGet('po_responses:program')) || [];
+  // Indirect attainment source (PO/PSO level): Program Exit + Parent + Alumni + Industry
+  // surveys, all rated directly per PO/PSO — equal-weighted average of whichever have data.
+  const poStakeholderKinds = ['program','parent','alumni','industry'];
+  const poByStakeholder = {};
+  for(const k of poStakeholderKinds){
+    const responses = (await sGet('po_responses:'+k)) || [];
+    poByStakeholder[k] = {responses};
+  }
   const programByPo = {};
   pos.forEach(p=>{
-    const vals = programResponses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
-    programByPo[p.id] = {count: programResponses.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
+    const groupAvgs = poStakeholderKinds.map(k=>{
+      const vals = poByStakeholder[k].responses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
+      return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+    }).filter(v=>v!=null);
+    programByPo[p.id] = { count: poStakeholderKinds.reduce((n,k)=>n+poByStakeholder[k].responses.length,0),
+      avg: groupAvgs.length ? (groupAvgs.reduce((a,b)=>a+b,0)/groupAvgs.length) : null };
   });
 
-  const headerOptions = resultSheet ? resultSheet.headers.map((h,i)=>`<option value="${i}" ${String(colMap.intCol)===String(i)?'selected':''}>${h}</option>`).join('') : '';
+  const benchmark = colMap.benchmark!=null ? colMap.benchmark : (saved.benchmark||50);
 
   c.innerHTML = `
     <div class="crumb">Academics</div>
@@ -1601,44 +1630,51 @@ async function renderAttainment(){
     </div>
 
     <div class="assumption-box">
-      Direct Attainment = 80% External(SA) Level + 20% Internal(FA+SLA) Level. Indirect Attainment
-      (course level) = equal-weighted average of the Course Exit, Parent, Alumni and Industry
-      survey ratings for this course. Final Course Attainment = 80% Direct + 20% Indirect, then
-      spread to PO/PSO via the CO&ndash;PO mapping strength; the resulting PO/PSO figure is itself
-      blended 80/20 with the Program Exit Survey's direct PO/PSO rating where available.
-      No separate attainment-formula document was supplied with this request — the 80/20 splits
-      above follow common NBA practice; adjust the weighting constants in code if your institute's
-      approved formula differs.
+      Direct Attainment = 80% External Level + 20% Internal Level. Every column of the uploaded
+      Result Sheet can be tagged Internal, External, or Ignored below — there is no limit of one
+      column per side, so FA-TH/FA-PR/SLA (Internal) and SA-TH/SA-PR (External), or any other
+      column layout your Result Sheet uses, can all be read at once. Indirect Attainment (course
+      level) uses the Course Exit (student) Survey only. Parent, Alumni and Industry surveys are
+      PO/PSO-level only and combine with the Program Exit Survey for PO/PSO indirect attainment.
+      CO→PO Attainment = Σ(CO Attainment × mapping strength) ÷ (3 × COs mapped to that PO).
     </div>
 
     <div class="card">
       <h3>1 &middot; Read Internal / External marks from the Semester ${course.semester} Result Sheet</h3>
-      ${!resultSheet ? `<div class="empty">No Result Sheet has been uploaded for Semester ${course.semester} yet — upload one under Academics → Result Sheets, or enter the counts manually below.</div>` : `
-      <p class="small-note">Choose which column(s) of the uploaded Result Sheet (<b>${resultSheet.filename}</b>, ${resultSheet.rows.length} students) hold this course's Internal (FA+SLA) and External (SA) marks, and their maximum marks, then click "Read from Result Sheet".</p>
-      <div class="row-flex">
-        <div class="field"><label>Internal (FA+SLA) marks column</label>
-          <select id="att-int-col"><option value="">— none —</option>${resultSheet.headers.map((h,i)=>`<option value="${i}" ${String(colMap.intCol)===String(i)?'selected':''}>${h}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label>Internal max marks</label><input type="number" id="att-int-max" value="${colMap.intMax||''}" placeholder="e.g. 20"/></div>
-        <div class="field"><label>External (SA) marks column</label>
-          <select id="att-ext-col"><option value="">— none —</option>${resultSheet.headers.map((h,i)=>`<option value="${i}" ${String(colMap.extCol)===String(i)?'selected':''}>${h}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label>External max marks</label><input type="number" id="att-ext-max" value="${colMap.extMax||''}" placeholder="e.g. 80"/></div>
+      ${!resultSheet ? `<div class="empty">No Result Sheet has been uploaded for Semester ${course.semester} yet — upload one under Academics → Result Sheets, or enter the Internal/External Levels manually in Section 2 below.</div>` : `
+      <p class="small-note">Tag every column that belongs to this course (<b>${resultSheet.filename}</b>, ${resultSheet.rows.length} students) as Internal or External, give its maximum marks, then click "Read from Result Sheet". Columns left as "Ignore" are skipped. Auto-guessed tags are pre-filled from the column name — check and correct them for this course.</p>
+      <div class="field" style="max-width:160px;"><label>Benchmark % (pass mark)</label><input type="number" id="att-benchmark" value="${benchmark}"/></div>
+      <div class="table-wrap" style="margin-top:10px;">
+        <table id="att-colmap-table">
+          <tr><th>Result Sheet Column</th><th>Role</th><th>Max Marks</th></tr>
+          ${resultSheet.headers.map((h,i)=>{
+            const saved_i = colMap.roles && colMap.roles[i] ? colMap.roles[i] : {role: guessComponentRole(h), max:''};
+            return `<tr>
+              <td>${h}</td>
+              <td><select data-role-idx="${i}">
+                <option value="ignore" ${saved_i.role==='ignore'?'selected':''}>Ignore</option>
+                <option value="internal" ${saved_i.role==='internal'?'selected':''}>Internal (FA/SLA)</option>
+                <option value="external" ${saved_i.role==='external'?'selected':''}>External (SA)</option>
+              </select></td>
+              <td><input type="number" data-max-idx="${i}" value="${saved_i.max||''}" style="width:90px;" placeholder="max"/></td>
+            </tr>`;
+          }).join('')}
+        </table>
       </div>
-      <button class="btn btn-outline" id="att-read-sheet">Read from Result Sheet</button>
+      <button class="btn btn-outline" id="att-read-sheet" style="margin-top:10px;">Read from Result Sheet</button>
       `}
     </div>
 
     <div class="card">
-      <h3>2 &middot; Direct Attainment inputs</h3>
+      <h3>2 &middot; Direct Attainment (Internal / External Levels)</h3>
+      <div id="att-component-detail"></div>
       <div class="row-flex">
-        <div class="field"><label>Benchmark % (pass mark)</label><input type="number" id="att-benchmark" value="${saved.benchmark}"/></div>
-        <div class="field"><label>Total Students Appeared</label><input type="number" id="att-total" value="${saved.totalStudents}"/></div>
-        <div class="field"><label># Students &ge; benchmark (Internal: FA+SLA)</label><input type="number" id="att-internal-above" value="${saved.internalAbove}"/></div>
-        <div class="field"><label># Students &ge; benchmark (External: SA)</label><input type="number" id="att-external-above" value="${saved.externalAbove}"/></div>
+        <div class="field"><label>Internal Level (0-3, average of tagged Internal columns)</label><input type="number" step="0.01" min="0" max="3" id="att-internal-level" value="${saved.manualInternalLevel||0}"/></div>
+        <div class="field"><label>External Level (0-3, average of tagged External columns)</label><input type="number" step="0.01" min="0" max="3" id="att-external-level" value="${saved.manualExternalLevel||0}"/></div>
       </div>
+      <p class="small-note">These two Levels drive the Direct Attainment formula below. They are filled in automatically by "Read from Result Sheet" above, or can be entered/overridden manually if no Result Sheet is available.</p>
       <button class="btn btn-primary" id="att-calc">Calculate Attainment</button>
-      <button class="btn btn-outline" id="att-export" style="margin-left:8px;">Export Attainment Sheet</button>
+      <button class="btn btn-outline" id="att-export" style="margin-left:8px;">Export Course Attainment Report</button>
     </div>
 
     <div id="att-results"></div>
@@ -1647,54 +1683,77 @@ async function renderAttainment(){
 
   const readBtn = document.getElementById('att-read-sheet');
   if(readBtn) readBtn.addEventListener('click', async ()=>{
-    const intColIdx = document.getElementById('att-int-col').value;
-    const intMax = parseFloat(document.getElementById('att-int-max').value)||0;
-    const extColIdx = document.getElementById('att-ext-col').value;
-    const extMax = parseFloat(document.getElementById('att-ext-max').value)||0;
-    if((intColIdx==='' || !intMax) && (extColIdx==='' || !extMax)){
-      toast('Choose at least one marks column and its maximum marks');
-      return;
-    }
-    const benchmark = parseFloat(document.getElementById('att-benchmark').value)||0;
-    let total = 0, intAbove = 0, extAbove = 0;
-    resultSheet.rows.forEach(row=>{
-      let counted = false;
-      if(intColIdx!=='' && intMax){
-        const raw = parseFloat(row[intColIdx]);
-        if(!isNaN(raw)){ counted = true; if((raw/intMax*100) >= benchmark) intAbove++; }
-      }
-      if(extColIdx!=='' && extMax){
-        const raw = parseFloat(row[extColIdx]);
-        if(!isNaN(raw)){ counted = true; if((raw/extMax*100) >= benchmark) extAbove++; }
-      }
-      if(counted) total++;
+    const bmk = parseFloat(document.getElementById('att-benchmark').value)||0;
+    const roles = {};
+    resultSheet.headers.forEach((h,i)=>{
+      const roleSel = document.querySelector(`[data-role-idx="${i}"]`);
+      const maxInp = document.querySelector(`[data-max-idx="${i}"]`);
+      const role = roleSel ? roleSel.value : 'ignore';
+      const max = maxInp ? (parseFloat(maxInp.value)||0) : 0;
+      if(role!=='ignore') roles[i] = {role, max, header:h};
     });
-    document.getElementById('att-total').value = total;
-    document.getElementById('att-internal-above').value = intAbove;
-    document.getElementById('att-external-above').value = extAbove;
-    await sSet('attainment_colmap:'+selId, {intCol:intColIdx, intMax, extCol:extColIdx, extMax});
-    toast(`Read ${total} student row(s) from the Result Sheet`);
+    const tagged = Object.keys(roles);
+    if(tagged.length===0){ toast('Tag at least one column as Internal or External, with its maximum marks'); return; }
+    const missingMax = tagged.filter(i=>!roles[i].max);
+    if(missingMax.length){ toast(`Enter the maximum marks for: ${missingMax.map(i=>roles[i].header).join(', ')}`); return; }
+
+    const componentResults = tagged.map(i=>{
+      const {role, max, header} = roles[i];
+      let appeared=0, above=0;
+      resultSheet.rows.forEach(row=>{
+        const raw = parseFloat(row[i]);
+        if(!isNaN(raw)){ appeared++; if((raw/max*100)>=bmk) above++; }
+      });
+      const pct = appeared ? (above/appeared*100) : 0;
+      return {idx:i, header, role, max, appeared, above, pct, level: levelFromPct(pct)};
+    });
+    const intComps = componentResults.filter(x=>x.role==='internal');
+    const extComps = componentResults.filter(x=>x.role==='external');
+    const intLevel = intComps.length ? (intComps.reduce((a,x)=>a+x.level,0)/intComps.length) : 0;
+    const extLevel = extComps.length ? (extComps.reduce((a,x)=>a+x.level,0)/extComps.length) : 0;
+
+    document.getElementById('att-internal-level').value = intLevel.toFixed(2);
+    document.getElementById('att-external-level').value = extLevel.toFixed(2);
+    await sSet('attainment_colmap:'+selId, {benchmark:bmk, roles});
+    await sSet('attainment_components:'+selId, componentResults);
+
+    const holder = document.getElementById('att-component-detail');
+    holder.innerHTML = `<div class="table-wrap"><table>
+      <tr><th>Column</th><th>Group</th><th>Appeared</th><th>≥ Benchmark</th><th>%</th><th>Level</th></tr>
+      ${componentResults.map(x=>`<tr><td>${x.header}</td><td>${x.role==='internal'?'Internal':'External'}</td><td>${x.appeared}</td><td>${x.above}</td><td>${x.pct.toFixed(1)}%</td><td><span class="badge-level ${levelClass(x.level)}">${x.level}</span></td></tr>`).join('')}
+    </table></div>`;
+    toast(`Read ${resultSheet.rows.length} student row(s) across ${tagged.length} column(s)`);
   });
+
+  // Show any previously-read component breakdown on load
+  (async ()=>{
+    const comps = await sGet('attainment_components:'+selId);
+    if(comps && comps.length){
+      document.getElementById('att-component-detail').innerHTML = `<div class="table-wrap"><table>
+        <tr><th>Column</th><th>Group</th><th>Appeared</th><th>≥ Benchmark</th><th>%</th><th>Level</th></tr>
+        ${comps.map(x=>`<tr><td>${x.header}</td><td>${x.role==='internal'?'Internal':'External'}</td><td>${x.appeared}</td><td>${x.above}</td><td>${x.pct.toFixed(1)}%</td><td><span class="badge-level ${levelClass(x.level)}">${x.level}</span></td></tr>`).join('')}
+      </table></div>`;
+    }
+  })();
 
   document.getElementById('att-calc').addEventListener('click', async ()=>{
-    const benchmark = parseFloat(document.getElementById('att-benchmark').value)||0;
-    const total = parseFloat(document.getElementById('att-total').value)||0;
-    const intAbove = parseFloat(document.getElementById('att-internal-above').value)||0;
-    const extAbove = parseFloat(document.getElementById('att-external-above').value)||0;
-    const payload = {benchmark, totalStudents:total, internalAbove:intAbove, externalAbove:extAbove};
+    const benchmark2 = parseFloat(document.getElementById('att-benchmark') ? document.getElementById('att-benchmark').value : benchmark) || benchmark;
+    const intLevel = parseFloat(document.getElementById('att-internal-level').value)||0;
+    const extLevel = parseFloat(document.getElementById('att-external-level').value)||0;
+    const payload = {benchmark:benchmark2, manualInternalLevel:intLevel, manualExternalLevel:extLevel};
     await sSet('attainment:'+selId, payload);
-    renderAttainmentResults(course, payload, cos, byStakeholder, mapping, pos, programByPo);
+    renderAttainmentResults(course, payload, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
   });
 
-  document.getElementById('att-export').addEventListener('click', ()=>{
-    const benchmark = parseFloat(document.getElementById('att-benchmark').value)||saved.benchmark||0;
-    const total = parseFloat(document.getElementById('att-total').value)||saved.totalStudents||0;
-    const intAbove = parseFloat(document.getElementById('att-internal-above').value)||saved.internalAbove||0;
-    const extAbove = parseFloat(document.getElementById('att-external-above').value)||saved.externalAbove||0;
-    exportAttainmentSheet(course, {benchmark, totalStudents:total, internalAbove:intAbove, externalAbove:extAbove}, cos, byStakeholder, mapping, pos, programByPo);
+  document.getElementById('att-export').addEventListener('click', async ()=>{
+    const intLevel = parseFloat(document.getElementById('att-internal-level').value)||saved.manualInternalLevel||0;
+    const extLevel = parseFloat(document.getElementById('att-external-level').value)||saved.manualExternalLevel||0;
+    const payload = {benchmark, manualInternalLevel:intLevel, manualExternalLevel:extLevel};
+    const comps = (await sGet('attainment_components:'+selId)) || [];
+    exportAttainmentSheet(course, payload, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps);
   });
 
-  if(saved.totalStudents>0){ renderAttainmentResults(course, saved, cos, byStakeholder, mapping, pos, programByPo); }
+  renderAttainmentResults(course, saved, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
 }
 
 function levelFromPct(pct){
@@ -1703,120 +1762,132 @@ function levelFromPct(pct){
   if(pct>=60) return 1;
   return 0;
 }
-function levelClass(l){ return 'lvl-'+l; }
+function levelClass(l){ return 'lvl-'+Math.round(l); }
 
-function computeAttainment(inputs, cos, byStakeholder, mapping, pos, programByPo){
-  const total = inputs.totalStudents || 0;
-  const intPct = total>0 ? (inputs.internalAbove/total*100) : 0;
-  const extPct = total>0 ? (inputs.externalAbove/total*100) : 0;
-  const intLevel = levelFromPct(intPct);
-  const extLevel = levelFromPct(extPct);
+function computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo){
+  const intLevel = inputs.manualInternalLevel||0;
+  const extLevel = inputs.manualExternalLevel||0;
   const direct = 0.8*extLevel + 0.2*intLevel;
 
-  const present = ['student','parent','alumni','industry'].map(k=>byStakeholder[k]).filter(g=>g.avg!=null);
-  const indirect = present.length ? (present.reduce((a,g)=>a+g.avg,0)/present.length) : 0;
+  const indirect = courseIndirect.avg!=null ? courseIndirect.avg : 0;
   const final = 0.8*direct + 0.2*indirect;
 
+  // Per-CO attainment: shared course Direct blended with that CO's own indirect rating
+  // (falls back to the course-wide indirect average if this specific CO has no responses).
+  const coAttainment = {};
+  cos.forEach(co=>{
+    const ind = coIndirect[co.id] && coIndirect[co.id].avg!=null ? coIndirect[co.id].avg : indirect;
+    coAttainment[co.id] = 0.8*direct + 0.2*ind;
+  });
+
+  // CO -> PO/PSO: Σ(CO Attainment × mapping strength) / (3 × mapped CO count)
   const poRows = pos.map(p=>{
     let weighted = 0, mappedCount = 0;
     cos.forEach(co=>{
       const strength = mapping[co.id] ? (mapping[co.id][p.id]||0) : 0;
-      if(strength>0){ weighted += (final*strength)/3; mappedCount++; }
+      if(strength>0){ weighted += coAttainment[co.id]*strength; mappedCount++; }
     });
-    const directPo = mappedCount ? weighted/mappedCount : 0;
+    const directPo = mappedCount ? weighted/(3*mappedCount) : 0;
     const indirectPo = programByPo[p.id] && programByPo[p.id].avg!=null ? programByPo[p.id].avg : null;
     const value = indirectPo!=null ? (0.8*directPo + 0.2*indirectPo) : directPo;
     return {code:p.code, text:p.text, directPo, indirectPo, value, mappedCount};
   });
 
-  return {intPct, extPct, intLevel, extLevel, direct, indirect, final, poRows};
+  return {intLevel, extLevel, direct, indirect, final, coAttainment, poRows};
 }
 
-function renderAttainmentResults(course, inputs, cos, byStakeholder, mapping, pos, programByPo){
+function renderAttainmentResults(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo){
   const box = document.getElementById('att-results');
-  const {intPct, extPct, intLevel, extLevel, direct, indirect, final, poRows} = computeAttainment(inputs, cos, byStakeholder, mapping, pos, programByPo);
-
-  const stakeholderLabels = {student:'Student (Course Exit)', parent:'Parent', alumni:'Alumni', industry:'Industry'};
+  const {intLevel, extLevel, direct, indirect, final, coAttainment, poRows} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
 
   box.innerHTML = `
     <div class="card">
       <h3>3 &middot; Direct Attainment</h3>
       <div class="stat-grid">
-        <div class="stat-box"><div class="v">${intPct.toFixed(1)}%</div><div class="l">Internal ≥ benchmark</div></div>
-        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(intLevel)}">Level ${intLevel}</span></div><div class="l">Internal Level</div></div>
-        <div class="stat-box"><div class="v">${extPct.toFixed(1)}%</div><div class="l">External ≥ benchmark</div></div>
-        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(extLevel)}">Level ${extLevel}</span></div><div class="l">External Level</div></div>
+        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(intLevel)}">${intLevel.toFixed(2)}</span></div><div class="l">Internal Level</div></div>
+        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(extLevel)}">${extLevel.toFixed(2)}</span></div><div class="l">External Level</div></div>
       </div>
-      <p><b>Direct Attainment</b> = 0.8 × ${extLevel} + 0.2 × ${intLevel} = <b>${direct.toFixed(2)}</b> / 3</p>
+      <p><b>Direct Attainment</b> = 0.8 × ${extLevel.toFixed(2)} + 0.2 × ${intLevel.toFixed(2)} = <b>${direct.toFixed(2)}</b> / 3</p>
     </div>
     <div class="card">
-      <h3>4 &middot; Indirect Attainment (Course Exit + Parent + Alumni + Industry Surveys)</h3>
+      <h3>4 &middot; Indirect Attainment (Course Exit Survey, per CO)</h3>
+      ${cos.length===0 ? '<div class="empty">No Course Outcomes defined for this course.</div>' : `
       <div class="table-wrap"><table>
-        <tr><th>Stakeholder</th><th>Responses</th><th>Average Rating</th></tr>
-        ${['student','parent','alumni','industry'].map(k=>{
-          const g = byStakeholder[k];
-          return `<tr><td>${stakeholderLabels[k]}</td><td>${g.count}</td><td>${g.avg!=null?g.avg.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td></tr>`;
+        <tr><th>CO</th><th>Statement</th><th>Responses</th><th>Average Rating</th></tr>
+        ${cos.map(co=>{
+          const ind = coIndirect[co.id];
+          return `<tr><td><b>${co.code}</b></td><td>${co.text||''}</td><td>${ind.count}</td><td>${ind.avg!=null?ind.avg.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td></tr>`;
         }).join('')}
-      </table></div>
-      <p style="margin-top:10px;"><b>Indirect Attainment</b> (equal-weighted average of the groups with data) = <b>${indirect.toFixed(2)}</b> / 3</p>
+      </table></div>`}
+      <p style="margin-top:10px;"><b>Indirect Attainment</b> (course-wide average of CO ratings) = <b>${indirect.toFixed(2)}</b> / 3 &middot; ${courseIndirect.count} response(s)</p>
     </div>
     <div class="card">
-      <h3>5 &middot; Final Course Attainment</h3>
-      <p><b>Final Attainment</b> = 0.8 × ${direct.toFixed(2)} + 0.2 × ${indirect.toFixed(2)} = <span class="badge-level ${levelClass(Math.round(final))}" style="font-size:16px;">${final.toFixed(2)} / 3</span></p>
+      <h3>5 &middot; Final Course Attainment (and per-CO attainment)</h3>
+      <p><b>Final Course Attainment</b> = 0.8 × ${direct.toFixed(2)} + 0.2 × ${indirect.toFixed(2)} = <span class="badge-level ${levelClass(Math.round(final))}" style="font-size:16px;">${final.toFixed(2)} / 3</span></p>
+      ${cos.length>0 ? `<div class="table-wrap" style="margin-top:10px;"><table>
+        <tr><th>CO</th><th>Attainment (Direct blended with that CO's own indirect)</th></tr>
+        ${cos.map(co=>`<tr><td><b>${co.code}</b></td><td>${coAttainment[co.id].toFixed(2)} / 3</td></tr>`).join('')}
+      </table></div>` : ''}
     </div>
     <div class="card">
-      <h3>6 &middot; PO / PSO Attainment (direct via CO mapping, blended with Program Exit Survey indirect)</h3>
+      <h3>6 &middot; PO / PSO Attainment</h3>
+      <p class="small-note">CO→PO Direct = Σ(CO Attainment × mapping strength) ÷ (3 × COs mapped to that PO). PO Indirect = equal-weighted average of the Program Exit, Parent, Alumni and Industry surveys' direct PO/PSO ratings.</p>
       ${pos.length===0 ? '<div class="empty">Define the PO/PSO parameter set first (Survey Parameters).</div>' : `
       <div class="table-wrap"><table>
-        <tr><th>Code</th><th>Statement</th><th>Direct (from COs)</th><th>Indirect (Program Exit)</th><th>Attainment</th></tr>
+        <tr><th>Code</th><th>Statement</th><th>Direct (from COs)</th><th>Indirect (Program/Parent/Alumni/Industry)</th><th>Attainment</th></tr>
         ${poRows.map(r=>`<tr><td><b>${r.code}</b></td><td>${r.text||''}</td><td>${r.mappedCount?r.directPo.toFixed(2)+' / 3':'<span class="small-note">not mapped</span>'}</td><td>${r.indirectPo!=null?r.indirectPo.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td><td><b>${r.value.toFixed(2)} / 3</b></td></tr>`).join('')}
       </table></div>`}
     </div>
   `;
 }
 
-function exportAttainmentSheet(course, inputs, cos, byStakeholder, mapping, pos, programByPo){
-  const {intPct, extPct, intLevel, extLevel, direct, indirect, final, poRows} = computeAttainment(inputs, cos, byStakeholder, mapping, pos, programByPo);
+function exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps){
+  const {intLevel, extLevel, direct, indirect, final, coAttainment, poRows} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
   const wb = XLSX.utils.book_new();
 
   const summaryAoa = [
-    ['Attainment Calculation Sheet'],
-    ['Course', course.code+' — '+course.name],
+    ['ATTAINMENT CALCULATION'],
+    ['Subject & Sub Code', course.code+' — '+course.name],
     ['Semester', course.semester],
     [],
-    ['1. Direct Attainment'],
-    ['Benchmark %', inputs.benchmark],
-    ['Total Students Appeared', inputs.totalStudents],
-    ['# Students ≥ benchmark — Internal (FA+SLA)', inputs.internalAbove],
-    ['Internal %', Number(intPct.toFixed(2))],
-    ['Internal Level (0-3)', intLevel],
-    ['# Students ≥ benchmark — External (SA)', inputs.externalAbove],
-    ['External %', Number(extPct.toFixed(2))],
-    ['External Level (0-3)', extLevel],
+    ['INTERNAL / EXTERNAL COMPONENTS (from Result Sheet)'],
+    ['Column','Group','Appeared','≥ Benchmark','%','Level'],
+    ...comps.map(x=>[x.header, x.role==='internal'?'Internal':'External', x.appeared, x.above, Number(x.pct.toFixed(2)), x.level]),
+    [],
+    ['DIRECT ATTAINMENT'],
+    ['Internal Level (0-3)', Number(intLevel.toFixed(3))],
+    ['External Level (0-3)', Number(extLevel.toFixed(3))],
     ['Direct Attainment = 0.8×External + 0.2×Internal', Number(direct.toFixed(3))],
     [],
-    ['2. Indirect Attainment (course level)'],
-    ['Stakeholder','Responses','Average Rating (/3)'],
-    ...['student','parent','alumni','industry'].map(k=>[k, byStakeholder[k].count, byStakeholder[k].avg!=null?Number(byStakeholder[k].avg.toFixed(3)):'']),
-    ['Indirect Attainment (equal-weighted average)', '', Number(indirect.toFixed(3))],
+    ['INDIRECT ATTAINMENT (from Course Exit Survey)'],
+    ['Course Outcome','Statement','Responses','Average Rating (/3)'],
+    ...cos.map(co=>[co.code, co.text||'', coIndirect[co.id].count, coIndirect[co.id].avg!=null?Number(coIndirect[co.id].avg.toFixed(3)):'']),
+    ['Course-wide Indirect Attainment (average)', '', courseIndirect.count, Number(indirect.toFixed(3))],
     [],
-    ['3. Final Course Attainment'],
-    ['Final Attainment = 0.8×Direct + 0.2×Indirect', Number(final.toFixed(3))],
+    ['FINAL ATTAINMENT'],
+    ['= 0.8 × Direct Attainment + 0.2 × Indirect Attainment'],
+    [`= 0.8 * ${direct.toFixed(2)} + 0.2 * ${indirect.toFixed(2)}`, Number(final.toFixed(3))],
   ];
   const ws1 = XLSX.utils.aoa_to_sheet(summaryAoa);
-  XLSX.utils.book_append_sheet(wb, ws1, 'Course Attainment');
+  XLSX.utils.book_append_sheet(wb, ws1, 'Attainment Calculation');
 
   const coRows = cos.map(co=>{
     const strengths = pos.map(p=> (mapping[co.id] ? (mapping[co.id][p.id]||0) : 0));
-    return [co.code, co.text, ...strengths];
+    return [co.code, co.text, coAttainment[co.id].toFixed(3), ...strengths];
   });
-  const coAoa = [['CO Code','CO Statement', ...pos.map(p=>p.code)], ...coRows];
+  const coAoa = [['CO Code','CO Statement','CO Attainment', ...pos.map(p=>p.code)], ...coRows];
   const ws2 = XLSX.utils.aoa_to_sheet(coAoa);
   XLSX.utils.book_append_sheet(wb, ws2, 'CO-PO Mapping');
 
   const poAoa = [
-    ['PO/PSO Code','Statement','Direct (from COs) /3','Indirect (Program Exit) /3','Attainment /3'],
-    ...poRows.map(r=>[r.code, r.text||'', r.mappedCount?Number(r.directPo.toFixed(3)):'', r.indirectPo!=null?Number(r.indirectPo.toFixed(3)):'', Number(r.value.toFixed(3))])
+    ['COPO Attainment Calculation'],
+    ['(Attainment of relevant COs × Actual mapping strength) / (Maximum mapping strength)'],
+    [],
+    ['PO/PSO Code','Statement','Direct (from COs) /3','Indirect (Program/Parent/Alumni/Industry) /3','Attainment /3'],
+    ...poRows.map(r=>[r.code, r.text||'', r.mappedCount?Number(r.directPo.toFixed(3)):'', r.indirectPo!=null?Number(r.indirectPo.toFixed(3)):'', Number(r.value.toFixed(3))]),
+    [],
+    ['Course Abr Code','Final Attainment', ...pos.map(p=>p.code)],
+    [course.code, Number(final.toFixed(3)), ...poRows.map(r=>Number(r.value.toFixed(3)))]
   ];
   const ws3 = XLSX.utils.aoa_to_sheet(poAoa);
   XLSX.utils.book_append_sheet(wb, ws3, 'PO-PSO Attainment');
