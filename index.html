@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <title>Dr. Panjabrao Deshmukh Polytechnic, NBA Portal</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root{
     --navy:#122a52;
@@ -70,7 +72,8 @@
   .btn-outline{background:transparent;border:1px solid var(--line);color:var(--ink);}
   .btn-danger{background:var(--red-soft);color:var(--red);border:1px solid #e3bdb6;}
   .btn-full{width:100%;margin-top:18px;}
-  .back-link{margin-top:16px;background:none;border:none;color:#f4e3c4;font-size:12.5px;text-decoration:underline;cursor:pointer;}
+  .back-link{margin-top:16px;display:block;width:100%;max-width:340px;box-sizing:border-box;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);color:#f4e3c4;font-size:15px;font-weight:600;padding:12px 16px;border-radius:8px;text-decoration:none;cursor:pointer;text-align:center;transition:.18s;}
+  .back-link:hover{background:rgba(255,255,255,0.18);}
   .form-error{color:#ffd2d2;font-size:12px;margin-top:8px;}
 
   /* ---------- App shell ---------- */
@@ -449,7 +452,7 @@ const menus = {
   student:[
     {grp:'Exit Survey', items:[
       {id:'ces-fill', label:'Course Exit Survey'},
-      {id:'pes-fill', label:'Program Exit Survey'},
+      {id:'pes-fill', label:'Program Exit Survey', requireSem6:true},
     ]}
   ],
   guest:[
@@ -582,7 +585,8 @@ async function renderUsers(){
     </div>
     <div class="card">
       <h3>Bulk-add Student accounts</h3>
-      <p class="small-note">Excel/CSV columns, in order: <b>Enrollment Number, Full Name, Username, Password, Semester (1-6)</b>. First row can be a header — non-numeric enrollment numbers in row 1 are skipped automatically. Existing usernames are skipped (updated students should use Reset Password instead).</p>
+      <p class="small-note">Excel/CSV columns, in order: <b>Enrollment Number, Full Name, Username, Password, Semester (1-6)</b>. First row can be a header. Existing usernames are skipped.</p>
+      <button class="btn btn-outline" id="s-bulk-template" style="margin-bottom:12px;">Download Template</button>
       <div class="file-drop">
         <input type="file" id="s-bulk-file" accept=".xlsx,.xls,.csv" />
         <p style="margin-top:8px;">Choose a file to bulk-create student login accounts</p>
@@ -660,6 +664,20 @@ async function renderUsers(){
     renderUsers();
   }));
 
+  const bulkTemplateBtn = document.getElementById('s-bulk-template');
+  if(bulkTemplateBtn) bulkTemplateBtn.addEventListener('click', ()=>{
+    const aoa = [
+      ['Enrollment Number','Full Name','Username','Password','Semester'],
+      ['2400123456','Aarav Sharma','aarav2400123456','Aarav@123',1],
+      ['2400123457','Isha Patil','isha2400123457','Isha@123',1],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:18},{wch:22},{wch:20},{wch:14},{wch:10}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Students');
+    XLSX.writeFile(wb, 'student_bulk_add_template.xlsx');
+  });
+
   const bulkFile = document.getElementById('s-bulk-file');
   if(bulkFile) bulkFile.addEventListener('change', async (e)=>{
     const file = e.target.files[0]; if(!file) return;
@@ -668,20 +686,32 @@ async function renderUsers(){
     const ws = wb.Sheets[wb.SheetNames[0]];
     const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
     let added = 0, skipped = 0;
+    const reasons = {};
+    const flag = (r)=>{ reasons[r]=(reasons[r]||0)+1; skipped++; };
     json.forEach(row=>{
+      if(row.every(cell=>String(cell).trim()==='')) return; // ignore fully blank rows silently
       const enrollment = String(row[0]||'').trim();
       const name = String(row[1]||'').trim();
       const username = String(row[2]||'').trim();
       const password = String(row[3]||'').trim();
       const semester = parseInt(row[4],10);
-      if(!enrollment || !/^\d+$/.test(enrollment) || !name || !username || !password || !(semester>=1 && semester<=6)){ skipped++; return; }
-      if(users.some(u=>u.username.toLowerCase()===username.toLowerCase())){ skipped++; return; }
+      if(!enrollment || !/^\d+$/.test(enrollment)){ flag('Enrollment Number missing or not numeric (e.g. header row)'); return; }
+      if(!name){ flag('Full Name missing'); return; }
+      if(!username){ flag('Username missing'); return; }
+      if(!password){ flag('Password missing'); return; }
+      if(!(semester>=1 && semester<=6)){ flag('Semester missing or not 1-6'); return; }
+      if(users.some(u=>u.username.toLowerCase()===username.toLowerCase())){ flag('Username already exists'); return; }
       users.push({id:uid('usr'), role:'student', name, username, password, semester, enrollment});
       added++;
     });
-    if(added===0){ toast('No valid rows found — check the column order and that usernames are not already taken'); return; }
+    if(added===0){
+      const reasonText = Object.entries(reasons).map(([r,n])=>`${n}× ${r}`).join('; ');
+      toast('No valid rows found — check the template. '+(reasonText||''));
+      return;
+    }
     await sSet('users', users);
-    toast(added+' student account(s) created'+(skipped?`, ${skipped} row(s) skipped`:''));
+    const reasonText = Object.entries(reasons).map(([r,n])=>`${n}× ${r}`).join(', ');
+    toast(added+' student account(s) created'+(skipped?`, ${skipped} row(s) skipped (${reasonText})`:''));
     renderUsers();
   });
 
@@ -1036,7 +1066,6 @@ async function renderStakeholderSurveyFill(kind){
   const subjectCols = await buildSubjectColumns(semester);
   const totalCos = subjectCols.reduce((n,sc)=>n+(sc.cos.length||0),0);
 
-  // A student may fill the Course Exit Survey for a given semester only once.
   const key = 'co_responses:student:'+semester;
   const responses = (await sGet(key)) || [];
   const already = state.enrollment ? responses.find(r=>r.enrollment===state.enrollment) : null;
@@ -1081,8 +1110,6 @@ async function renderStakeholderSurveyFill(kind){
   const submitBtn = document.getElementById('fill-submit');
   if(submitBtn) submitBtn.addEventListener('click', async ()=>{
     if(!state.enrollment){ toast('Your account has no Enrollment Number on file — ask Admin to add one under Manage Users.'); return; }
-    const identity = { enrollment: state.enrollment, name: state.name };
-
     const ratings = {};
     let answered = 0;
     document.querySelectorAll('#fill-table select[data-co]').forEach(sel=>{
@@ -1092,12 +1119,12 @@ async function renderStakeholderSurveyFill(kind){
     if(answered<totalCos && !confirm('Some Course Outcomes are left unrated. Submit anyway?')) return;
 
     const fresh = (await sGet(key)) || [];
-    if(fresh.some(r=>r.enrollment===identity.enrollment)){
+    if(fresh.some(r=>r.enrollment===state.enrollment)){
       toast('You have already submitted the Course Exit Survey for this semester.');
       renderStakeholderSurveyFill(kind);
       return;
     }
-    fresh.push({id:uid('resp'), ...identity, semester, ratings, submittedAt:new Date().toISOString()});
+    fresh.push({id:uid('resp'), enrollment: state.enrollment, name: state.name, semester, ratings, submittedAt:new Date().toISOString()});
     await sSet(key, fresh);
     toast('Survey submitted — thank you!');
     renderStakeholderSurveyFill(kind);
@@ -1105,10 +1132,9 @@ async function renderStakeholderSurveyFill(kind){
 }
 
 /* ---------- PO/PSO-WISE SURVEY (Program Exit / Parent / Alumni / Industry) ----------
-   Per the institute's format, Parent, Industry and Alumni feedback is collected at the
-   Program Outcome / PSO level only (not per-Course-Outcome). The Program Exit Survey
-   (filled by students, once each) uses the same PO/PSO rating grid. All four feed PO/PSO
-   indirect attainment; none of them feed course-level (CO) indirect attainment any more. */
+   Parent, Industry and Alumni feedback is collected at the Program Outcome / PSO level
+   only (not per-Course-Outcome). The Program Exit Survey is filled by students (once
+   each) using the same PO/PSO rating grid. All four feed PO/PSO indirect attainment. */
 const poSurveyConfig = {
   program: { title:'Program Exit Survey', once:true },
   parent: { title:'Parent Feedback Survey', once:false },
@@ -1138,6 +1164,14 @@ function poIdentityFieldsHtml(kind, industries){
 
 async function renderPOSurveyFill(kind){
   const c = document.getElementById('content');
+  if(kind==='program' && state.role==='student' && state.semester!==6){
+    c.innerHTML = `
+      <div class="crumb">Exit Survey</div>
+      <div class="page-head"><div><h2>Program Exit Survey</h2></div></div>
+      <div class="card"><div class="empty">The Program Exit Survey is only for Final Year (Semester 6) students. Please use the Course Exit Survey instead.</div></div>
+    `;
+    return;
+  }
   const cfg = poSurveyConfig[kind];
   const pos = (await sGet('program_params')) || [];
   const key = 'po_responses:'+kind;
@@ -1231,6 +1265,7 @@ async function renderSurveyResponses(){
   const c = document.getElementById('content');
   const kind = state.sub.srKind || 'student';
   const sem = state.sub.srSem || 1;
+  const isCoWise = kind==='student';
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
     <div class="page-head"><div><h2>Survey Responses</h2><p class="sub">Complete response data, exactly as submitted — searchable, filterable, and exportable.</p></div></div>
@@ -1243,11 +1278,12 @@ async function renderSurveyResponses(){
     </div>
     <div class="card">
       <div class="row-flex" style="align-items:flex-end;">
-        ${kind==='student' ? `<div class="field" style="max-width:160px;"><label>Semester</label>
+        ${isCoWise ? `<div class="field" style="max-width:160px;"><label>Semester</label>
           <select id="sr-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${sem===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
         </div>` : ''}
         <div class="field" style="flex:1;min-width:200px;"><label>Search (name / enrollment / industry)</label><input id="sr-search" placeholder="Type to filter…"/></div>
         <button class="btn btn-outline" id="sr-export">Export to Excel</button>
+        <button class="btn btn-outline" id="sr-export-pdf">${isCoWise ? 'Download PDF (Course Exit)' : 'Download Consolidated PDF (Program/Parent/Alumni/Industry)'}</button>
         <button class="btn btn-danger" id="sr-delete-all">Delete All</button>
       </div>
       <div id="sr-table-holder" style="margin-top:14px;"></div>
@@ -1257,12 +1293,9 @@ async function renderSurveyResponses(){
   const semSel = document.getElementById('sr-sem');
   if(semSel) semSel.addEventListener('change', e=>{ state.sub.srSem=parseInt(e.target.value,10); renderSurveyResponses(); });
 
-  // Student = Course Exit Survey (CO-wise, per semester). Program/Parent/Alumni/Industry are
-  // all PO/PSO-wise (Parent, Alumni and Industry now rate Program Outcomes only, not COs).
-  const isCoWise = kind==='student';
   const pos = !isCoWise ? ((await sGet('program_params')) || []) : [];
   const subjectCols = isCoWise ? await buildSubjectColumns(sem) : [];
-  const key = isCoWise ? ('co_responses:'+kind+':'+sem) : ('po_responses:'+kind);
+  const key = isCoWise ? ('co_responses:student:'+sem) : ('po_responses:'+kind);
   const allResponses = (await sGet(key)) || [];
 
   function draw(filterText){
@@ -1280,6 +1313,10 @@ async function renderSurveyResponses(){
   document.getElementById('sr-export').addEventListener('click', ()=>{
     if(isCoWise) exportResponsesToExcel(kind, sem, subjectCols, allResponses);
     else exportProgramResponsesToExcel(pos, allResponses, kind);
+  });
+  document.getElementById('sr-export-pdf').addEventListener('click', async ()=>{
+    if(isCoWise) await exportStudentSurveyPDF(sem, subjectCols, allResponses);
+    else await exportConsolidatedSurveyPDF(pos);
   });
   document.getElementById('sr-delete-all').addEventListener('click', async ()=>{
     if(allResponses.length===0){ toast('There are no responses to delete.'); return; }
@@ -1364,6 +1401,120 @@ function exportResponsesToExcel(kind, sem, subjectCols, responses){
   XLSX.writeFile(wb, `${kind}_survey_sem${sem}.xlsx`);
 }
 
+/* ---------- PDF letterhead helper (logo + college name), shared by survey report PDFs ---------- */
+function pdfLoadImageDataUrl(){
+  const img = document.querySelector('.banner-img') || document.querySelector('.banner-card img');
+  return img ? img.src : null;
+}
+function pdfAddLetterhead(doc, title){
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 14;
+  const logoSrc = pdfLoadImageDataUrl();
+  if(logoSrc){
+    try{ doc.addImage(logoSrc, 'PNG', 14, y-6, 20, 20); }catch(e){ console.error('logo embed failed', e); }
+  }
+  doc.setFontSize(15); doc.setFont(undefined,'bold');
+  doc.text('Dr. Panjabrao Deshmukh Polytechnic', pageWidth/2, y, {align:'center'}); y+=6;
+  doc.setFontSize(11); doc.setFont(undefined,'normal');
+  doc.text('Amravati', pageWidth/2, y, {align:'center'}); y+=9;
+  doc.setFontSize(13); doc.setFont(undefined,'bold');
+  doc.text(title, pageWidth/2, y, {align:'center'}); y+=6;
+  doc.setDrawColor(18,42,82); doc.setLineWidth(0.5);
+  doc.line(14, y, pageWidth-14, y); y+=8;
+  doc.setFont(undefined,'normal');
+  return y;
+}
+
+/* ---------- PDF: Student (Course Exit) Survey Report — per semester, with letterhead ---------- */
+async function exportStudentSurveyPDF(sem, subjectCols, responses){
+  if(subjectCols.length===0){ toast('No subjects/COs defined for this semester yet'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape'});
+  let y = pdfAddLetterhead(doc, `Course Exit Survey Report — Semester ${sem}`);
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFontSize(12);
+  doc.text(`Total responses: ${responses.length}`, 14, y); y+=6;
+
+  if(responses.length===0){
+    doc.text('No responses have been submitted yet.', 14, y);
+    doc.save(`course_exit_survey_sem${sem}.pdf`);
+    return;
+  }
+
+  const flatCos = flattenCoColumns(subjectCols);
+  const head1 = ['Enrollment', ...flatCos.map(fc=>fc.course.code)];
+  const head2 = ['', ...flatCos.map(fc=>fc.co?fc.co.code:'')];
+  const body = responses.map(r=>[r.enrollment||r.name||'', ...flatCos.map(fc=> fc.co ? (r.ratings[fc.course.id+'::'+fc.co.id] ?? '') : '')]);
+  const avgRow = ['AVERAGE', ...flatCos.map(fc=>{
+    if(!fc.co) return '';
+    const vals = responses.map(r=>r.ratings[fc.course.id+'::'+fc.co.id]).filter(v=>v!=null);
+    return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : '';
+  })];
+
+  doc.autoTable({
+    startY:y,
+    head:[head1, head2],
+    body:[...body, avgRow],
+    styles:{fontSize:9}, headStyles:{fillColor:[18,42,82]},
+    margin:{left:14,right:14},
+    didParseCell: (data)=>{ if(data.row.index===body.length && data.section==='body') data.cell.styles.fontStyle='bold'; }
+  });
+
+  doc.save(`course_exit_survey_sem${sem}.pdf`);
+}
+
+/* ---------- PDF: Consolidated Program Exit + Parent + Alumni + Industry Survey Report ---------- */
+async function exportConsolidatedSurveyPDF(pos){
+  if(pos.length===0){ toast('Define the shared PO/PSO parameter set first'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape'});
+  let y = pdfAddLetterhead(doc, 'Consolidated Exit Survey Report — Program Exit / Parent / Alumni / Industry');
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  const sections = [
+    {kind:'program', title:'Program Exit Survey (Final Year Students)'},
+    {kind:'parent', title:'Parent Feedback Survey'},
+    {kind:'alumni', title:'Alumni Feedback Survey'},
+    {kind:'industry', title:'Industry Feedback Survey'},
+  ];
+
+  for(const sec of sections){
+    const responses = (await sGet('po_responses:'+sec.kind)) || [];
+    if(y>170){ doc.addPage(); y=16; }
+    doc.setFontSize(12); doc.setFont(undefined,'bold');
+    doc.text(sec.title+` (${responses.length} response${responses.length===1?'':'s'})`, 14, y); y+=5;
+    doc.setFont(undefined,'normal');
+
+    if(responses.length===0){
+      doc.setFontSize(10);
+      doc.text('No responses submitted yet.', 14, y); y+=10;
+      continue;
+    }
+
+    const body = responses.map(r=>[
+      r.enrollment ? (r.enrollment+' — '+r.name) : (r.industry ? (r.name+' — '+r.industry) : r.name),
+      ...pos.map(p=> r.ratings[p.id] ?? '')
+    ]);
+    const avgRow = ['AVERAGE', ...pos.map(p=>{
+      const vals = responses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
+      return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : '';
+    })];
+
+    doc.autoTable({
+      startY:y,
+      head:[['Respondent', ...pos.map(p=>p.code)]],
+      body:[...body, avgRow],
+      styles:{fontSize:9}, headStyles:{fillColor:[18,42,82]},
+      margin:{left:14,right:14},
+      didParseCell: (data)=>{ if(data.row.index===body.length && data.section==='body') data.cell.styles.fontStyle='bold'; }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  doc.save(`consolidated_exit_survey_report.pdf`);
+}
+
 
 /* ======================================================================
    ADMIN/TEACHER: RESULT SHEETS (per semester tabs, upload)
@@ -1404,8 +1555,35 @@ async function renderResults(){
     const wb = XLSX.read(data, {type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
     const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-    const headers = json[0] || [];
-    const rows = json.slice(1).filter(r=>r.some(cell=>cell!==''));
+
+    // Many mark sheets use a 2-row header: row 1 has merged group labels like "INTERNAL" /
+    // "EXTERNAL" (blank in the merged-over cells), row 2 has the actual per-subject
+    // sub-headers (e.g. subject codes). Detect this by checking whether row 2 looks like
+    // header text (not numeric marks) — if so, forward-fill row 1's blanks across the
+    // merge and combine "row2 row1" into one header per column, e.g. "BMS Internal".
+    const row0 = json[0] || [];
+    const row1 = json[1] || [];
+    const nonEmpty1 = row1.filter(v=>String(v).trim()!=='');
+    const numericCount1 = nonEmpty1.filter(v=>!isNaN(parseFloat(v)) && v!=='').length;
+    const row1LooksLikeHeader = nonEmpty1.length>0 && (numericCount1/nonEmpty1.length) < 0.5;
+
+    let headers, dataStart;
+    if(row1LooksLikeHeader){
+      let lastVal = '';
+      const filled = row0.map(v=>{ const s=String(v||'').trim(); if(s){ lastVal=s; return s; } return lastVal; });
+      headers = row1.map((v,i)=>{
+        const group = filled[i] || '';
+        const sub = String(v||'').trim();
+        if(group && sub && group.toLowerCase()!==sub.toLowerCase()) return `${sub} ${group}`;
+        return sub || group;
+      });
+      dataStart = 2;
+    } else {
+      headers = row0;
+      dataStart = 1;
+    }
+
+    const rows = json.slice(dataStart).filter(r=>r.some(cell=>cell!==''));
     const payload = {filename:file.name, headers, rows, uploadedAt:new Date().toISOString()};
     await sSet('result_sem:'+sem, payload);
     toast('Result sheet uploaded for Sem '+sem);
@@ -1467,7 +1645,7 @@ async function renderCopo(){
       const newMapping = {};
       let matchedRows = 0, matchedCells = 0;
       json.slice(1).forEach(row=>{
-        if(row.every(cell=>cell==='')) return; // skip blank rows
+        if(row.every(cell=>cell==='')) return;
         const coCode = norm(row[0]);
         const co = cos.find(x=>norm(x.code)===coCode);
         if(!co) return;
@@ -1486,7 +1664,6 @@ async function renderCopo(){
         fileInput.value = '';
         return;
       }
-      // preserve any existing rows for COs not present in the uploaded file
       cos.forEach(co=>{ if(!newMapping[co.id]) newMapping[co.id] = mapping[co.id] || {}; });
       await sSet('copo:'+selId, newMapping);
       toast(`Mapping file loaded — ${matchedRows} CO row(s), ${matchedCells} non-zero cell(s).`);
@@ -1525,76 +1702,356 @@ function renderCopoGrid(cos,pos,mapping){
   const head = `<tr><th>CO \\ PO</th>${pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>`;
   const rows = cos.map(co=>{
     const cells = pos.map(p=>{
-      const v = mapping[co.id] && mapping[co.id][p.id] !== undefined ? mapping[co.id][p.id] : '';
-      return `<td><input class="matrix-input" type="number" min="0" max="3" value="${v}" data-cell="${co.id}_${p.id}"/></td>`;
+      const raw = mapping[co.id] && mapping[co.id][p.id] !== undefined ? mapping[co.id][p.id] : 0;
+      const v = raw>0 ? raw : '';
+      return `<td><input class="matrix-input" type="number" min="0" max="3" value="${v}" placeholder="-" data-cell="${co.id}_${p.id}"/></td>`;
     }).join('');
     return `<tr><td><b>${co.code}</b></td>${cells}</tr>`;
   }).join('');
   return `<div class="table-wrap"><table>${head}${rows}</table></div>
-  <p class="small-note">Scale: 0 = not mapped, 1 = low, 2 = medium, 3 = high (substantial) correlation. Edit any cell above and click Save — the values shown already reflect anything previously entered or uploaded.</p>
+  <p class="small-note">Scale: 1 = low, 2 = medium, 3 = high (substantial) correlation. Leave a cell blank ("-") for no mapping. Edit any cell and click Save — the values shown already reflect anything previously entered or uploaded.</p>
   <button class="btn btn-primary" id="copo-save" style="margin-top:8px;">Save Mapping</button>
   ${hasMapping ? `<button class="btn btn-danger" id="copo-clear" style="margin-top:8px;margin-left:8px;">Delete / Clear Mapping</button>` : ''}`;
 }
 
+
+
+
 /* ======================================================================
    ADMIN/TEACHER: ATTAINMENT CALCULATION
-   Matches the institute's own Attainment Calculation format (as supplied):
-   - INTERNAL and EXTERNAL marks are read straight from the uploaded Result
-     Sheet. Every column of the sheet is selectable — nothing is limited to
-     one "Internal" and one "External" column. Typical components are
-     FA-TH, FA-PR, SLA (Internal) and SA-TH, SA-PR (External), but any
-     column can be tagged Internal / External / Ignore, and as many columns
-     as apply can be tagged into each group (e.g. a practical subject may
-     have 3 Internal columns and 2 External columns; a theory-only subject
-     may have just 1 of each).
-   - Each tagged column gets its own attainment Level (0-3) from the % of
-     students scoring ≥ benchmark in that column; Internal Level = average
-     of the Internal columns' levels, External Level = average of the
-     External columns' levels (component groups with no column keep the
-     manual-entry level below).
+   Two-step workflow:
+   1) "Result Sheet Setup" — done once per semester. Every subject found in that
+      semester's Result Sheet is listed; tag each subject's Internal (FA-TH/FA-PR/SLA)
+      and External (SA-TH/SA-PR) columns with their max marks. Saved per (semester,
+      subject) — NOT per course — so it's read automatically forever after and is
+      never re-asked when picking a different course.
+   2) "Calculate Attainment" — pick a course, see Direct/Indirect/Final/CO-PO/PO-PSO
+      Attainment computed from what was set up in step 1.
+
+   Formulas:
+   - Level from % of students ≥ benchmark: below benchmark → Level 1 (flat); at/above
+     benchmark → 1/2/3 (by 60/70/80% bands) plus the tenths digit of the percentage as
+     a decimal, e.g. 60.61% → Level 1.06. Level is capped at 3 (no decimal added once
+     the top band is reached).
    - Direct Attainment = 0.8 × External Level + 0.2 × Internal Level
-   - Indirect Attainment (course level) = average CO rating from the
-     Course Exit (student) Survey ONLY — Parent / Alumni / Industry surveys
-     are PO/PSO-level only (see below) and no longer feed course-level
-     indirect attainment.
+   - Indirect Attainment = average CO rating from the Course Exit (student) Survey,
+     computed per-CO, then averaged across the course's COs.
    - Final Course Attainment = 0.8 × Direct + 0.2 × Indirect
-   - CO→PO/PSO Attainment = Σ(CO Attainment × mapping strength) / (3 ×
-     number of COs mapped to that PO), i.e. "Attainment of relevant COs ×
-     Actual mapping strength / Maximum mapping strength" — each CO's own
-     attainment is the course's Direct Attainment blended with that
-     specific CO's own indirect (Course Exit Survey) rating, so different
-     COs under the same course can attain differently.
-   - Final PO/PSO Attainment = that CO-based (direct) PO value blended
-     80/20 with the PO/PSO's own indirect rating, which is the equal-
-     weighted average of the Program Exit, Parent, Alumni and Industry
-     surveys (whichever of those four have responses).
+   - CO→PO/PSO Attainment = Σ(CO Attainment × mapping strength) / (3 × COs mapped to
+     that PO) — cells with no mapping strength are shown as "-", never as 0.
+   - Section 6 "PO / PSO Attainment" is shown only for Final Year (Semester 6) courses.
    ====================================================================== */
-const ATTAINMENT_COMPONENT_ROLES = ['ignore','internal','external'];
+
+// Known course code → Result Sheet abbreviation, so column matching works even when the
+// course name doesn't carry a "(ABBR)" suffix. Falls back to name-parsing / course code
+// if a code isn't listed here — add more pairs below as needed.
+const COURSE_ABBR_BY_CODE = {
+  '311302':'BMS', '311301':'BSC', '311303':'English', '311008':'EGE', '311002':'WPC',
+  '311001':'ICT', '311003':'YAM',
+  '312301':'AMS', '312302':'BEE', '312303':'PIC', '312001':'BLP', '312004':'WPD',
+  '312002':'PCO', '312003':'SFS',
+  '313301':'DSU', '313302':'DMS', '313303':'DTE', '313304':'OOP', '313001':'CGR', '313002':'EIC',
+  '314301':'EST', '314317':'JPR', '314318':'DCN', '314321':'MIC', '314001':'PWP', '314005':'UID',
+  '315319':'OSY', '315323':'STE', '315002':'ENDS', '315003':'SPI', '315004':'ITR',
+  '315321':'ACN', '315301':'MAN',
+  '316313':'ETI', '316314':'SFT', '316005':'CSS', '316006':'MAD', '316004':'CPE', '316317':'NIS',
+};
+
+function extractComponentLabel(header){
+  const h = String(header||'').toLowerCase().replace(/[\s_]+/g,'-');
+  if(/fa-?th/.test(h)) return 'FA-TH';
+  if(/fa-?pr/.test(h)) return 'FA-PR';
+  if(/\bsla\b/.test(h)) return 'SLA';
+  if(/sa-?th/.test(h)) return 'SA-TH';
+  if(/sa-?pr/.test(h)) return 'SA-PR';
+  return null;
+}
 function guessComponentRole(header){
-  const h = String(header||'').toLowerCase();
-  if(/\b(fa|sla|internal|ia|cie)\b/.test(h)) return 'internal';
+  const label = extractComponentLabel(header);
+  if(label) return ['FA-TH','FA-PR','SLA'].includes(label) ? 'internal' : 'external';
+  const h = String(header||'').toLowerCase().replace(/[\s_]+/g,'-');
+  if(/\b(fa|internal|ia|cie)\b/.test(h)) return 'internal';
   if(/\b(sa|ese|external|university|univ)\b/.test(h)) return 'external';
   return 'ignore';
 }
 
+// Read the actual subject "prefix" straight out of the Result Sheet's own column names
+// (e.g. "ASM- FA-TH" → "ASM"). Tier 1: strict match against a recognizable component
+// suffix. Fallback (per-column, not per-sheet): if a given header doesn't match that
+// pattern, split it on its first separator and use that as a generic prefix instead —
+// this handles sheets where some subjects use the FA-TH/SA-TH convention and others don't,
+// so every subject in the sheet gets listed, not just the ones matching one convention.
+function extractHeaderPrefixStrict(header){
+  const raw = String(header||'');
+  const m = raw.match(/^(.*?)[\s_-]*\b(fa-?th|fa-?pr|sla|sa-?th|sa-?pr)\b/i);
+  if(!m) return null;
+  return m[1].replace(/[\s_-]+$/,'').trim();
+}
+function extractHeaderPrefixGeneric(header){
+  const raw = String(header||'').trim();
+  const m = raw.match(/^([A-Za-z0-9]+)[\s_-]+(.+)$/);
+  if(!m) return null;
+  if(/^(enroll|enrollment|roll|name|student|sr|no|id|sl)$/i.test(m[1])) return null; // skip identity columns
+  return m[1].trim();
+}
+function extractHeaderPrefix(header){
+  return extractHeaderPrefixStrict(header) || extractHeaderPrefixGeneric(header);
+}
+function extractSheetPrefixes(resultSheet){
+  const set = new Set();
+  resultSheet.headers.forEach(h=>{ const p = extractHeaderPrefix(h); if(p) set.add(p); });
+  return Array.from(set).sort();
+}
+function columnsForPrefix(resultSheet, prefix){
+  return resultSheet.headers.map((h,i)=>i).filter(i=>extractHeaderPrefix(resultSheet.headers[i])===prefix);
+}
+function cssSafe(s){ return String(s).replace(/[^A-Za-z0-9]/g,'_'); }
+
+function levelFromPct(pct, benchmark){
+  benchmark = benchmark==null ? 50 : benchmark;
+  if(pct < benchmark) return 1;
+  if(pct >= 80) return 3; // Level is capped at 3 — no decimal added once the top band is reached
+  if(pct >= 70){
+    const offset = Math.round(((pct-70)/10)*100)/100;
+    return Math.round((2+offset)*100)/100;
+  }
+  if(pct >= 60){
+    const offset = Math.round(((pct-60)/10)*100)/100;
+    return Math.round((1+offset)*100)/100;
+  }
+  return 1; // above benchmark but below the 60% band start — flat Level 1
+}
+function levelClass(l){ return 'lvl-'+Math.max(0,Math.min(3,Math.floor(l))); }
+function mapCell(v){ return (v && v>0) ? v : '-'; }
+
+function computeComponentsFromResultSheet(resultSheet, roles, benchmark){
+  const tagged = Object.keys(roles||{});
+  const componentResults = tagged.map(i=>{
+    const {role, max, header} = roles[i];
+    let appeared=0, above=0;
+    resultSheet.rows.forEach(row=>{
+      const raw = parseFloat(row[i]);
+      if(!isNaN(raw)){ appeared++; if((raw/max*100)>=benchmark) above++; }
+    });
+    const pct = appeared ? (above/appeared*100) : 0;
+    return {idx:i, header, role, max, appeared, above, pct, level: levelFromPct(pct, benchmark)};
+  });
+  const intComps = componentResults.filter(x=>x.role==='internal');
+  const extComps = componentResults.filter(x=>x.role==='external');
+  const intLevel = intComps.length ? (intComps.reduce((a,x)=>a+x.level,0)/intComps.length) : 0;
+  const extLevel = extComps.length ? (extComps.reduce((a,x)=>a+x.level,0)/extComps.length) : 0;
+  return {componentResults, intComps, extComps, intLevel, extLevel};
+}
+
+/* ---------- TOP-LEVEL DISPATCHER ---------- */
 async function renderAttainment(){
   await loadCoursesIfNeeded();
   const c = document.getElementById('content');
-  if(state.courses.length===0){ c.innerHTML = `<div class="crumb">Academics</div><h2>Attainment Calculation</h2><div class="empty">Add courses first.</div>`; return; }
-  const selId = state.sub.attCourseId || state.courses[0].id;
-  state.sub.attCourseId = selId;
-  const course = state.courses.find(x=>x.id===selId);
-  const saved = (await sGet('attainment:'+selId)) || {benchmark:50, manualInternalLevel:0, manualExternalLevel:0};
-  const colMap = (await sGet('attainment_colmap:'+selId)) || {benchmark:50, roles:{}};
-  const cos = (await sGet('ces_params:'+selId)) || [];
-  const mapping = (await sGet('copo:'+selId)) || {};
+  const activeTab = state.sub.attTab || 'setup';
+  c.innerHTML = `
+    <div class="crumb">Academics</div>
+    <div class="page-head"><div><h2>Attainment Calculation</h2><p class="sub">Set up each subject's Internal/External marks once per semester, then pick a course to see its attainment.</p></div></div>
+    <div class="tabs">
+      <button class="tab-btn ${activeTab==='setup'?'active':''}" data-att-tab="setup">1 &middot; Result Sheet Setup</button>
+      <button class="tab-btn ${activeTab==='calc'?'active':''}" data-att-tab="calc">2 &middot; Calculate Attainment</button>
+      <button class="tab-btn ${activeTab==='copo'?'active':''}" data-att-tab="copo">3 &middot; CO-PO Attainment Calculation</button>
+      <button class="tab-btn ${activeTab==='targets'?'active':''}" data-att-tab="targets">4 &middot; Course Targets</button>
+      <button class="tab-btn ${activeTab==='consolidated'?'active':''}" data-att-tab="consolidated">5 &middot; Consolidated Report</button>
+    </div>
+    <div id="att-body"></div>
+  `;
+  c.querySelectorAll('[data-att-tab]').forEach(b=>b.addEventListener('click', ()=>{ state.sub.attTab=b.dataset.attTab; renderAttainment(); }));
+  if(activeTab==='setup') await renderAttainmentSetupTab();
+  else if(activeTab==='copo') await renderAttainmentCopoTab();
+  else if(activeTab==='targets') await renderAttainmentTargetsTab();
+  else if(activeTab==='consolidated') await renderAttainmentConsolidatedTab();
+  else await renderAttainmentCalcTab();
+}
+
+/* ---------- STEP 1: RESULT SHEET SETUP (once per semester, all subjects) ---------- */
+async function renderAttainmentSetupTab(){
+  const body = document.getElementById('att-body');
+  const sem = state.sub.attSetupSem || 1;
+  const resultSheet = await sGet('result_sem:'+sem);
+  const globalMaxDefaults = (await sGet('attainment_component_max_defaults')) || {};
+  const coursesInSem = state.courses.filter(co=>co.semester===sem);
+
+  body.innerHTML = `
+    <div class="field" style="max-width:200px;"><label>Semester</label>
+      <select id="att-setup-sem">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${sem===n?'selected':''}>Sem ${n}</option>`).join('')}</select>
+    </div>
+    <div class="field" style="max-width:160px;"><label>Benchmark % (pass mark)</label><input type="number" id="att-setup-benchmark" value="${state.sub.attBenchmark||60}"/></div>
+    ${!resultSheet ? `<div class="card"><div class="empty">No Result Sheet has been uploaded for Semester ${sem} yet — upload one under Academics → Result Sheets, then come back here.</div></div>` : `<div id="att-setup-subjects"></div>`}
+  `;
+  document.getElementById('att-setup-sem').addEventListener('change', e=>{ state.sub.attSetupSem=parseInt(e.target.value,10); renderAttainmentSetupTab(); });
+  document.getElementById('att-setup-benchmark').addEventListener('change', e=>{ state.sub.attBenchmark=parseFloat(e.target.value)||60; });
+  if(!resultSheet) return;
+
+  const holder = document.getElementById('att-setup-subjects');
+  if(coursesInSem.length===0){
+    holder.innerHTML = `<div class="card"><div class="empty">No courses are defined for Semester ${sem} yet — add them under Academics → Manage Courses first.</div></div>`;
+    return;
+  }
+
+  const sheetPrefixes = extractSheetPrefixes(resultSheet);
+
+  // Link every course in this semester to its Result Sheet subject (auto-confirms exact
+  // matches; suggests a best guess for the rest, needing one click to confirm).
+  const courseLinks = [];
+  for(const course of coursesInSem){
+    const res = await resolveCoursePrefix(course, sheetPrefixes);
+    courseLinks.push({course, confirmed:res.confirmed, suggested:res.suggested});
+  }
+
+  const savedMaps = {};
+  for(const link of courseLinks){
+    if(link.confirmed && !(link.confirmed in savedMaps)){
+      savedMaps[link.confirmed] = (await sGet('attainment_colmap_by_prefix:'+sem+':'+link.confirmed)) || null;
+    }
+  }
+  const configuredCount = courseLinks.filter(l=>l.confirmed && savedMaps[l.confirmed] && savedMaps[l.confirmed].roles && Object.keys(savedMaps[l.confirmed].roles).length>0).length;
+
+  const linkedPrefixes = new Set(courseLinks.filter(l=>l.confirmed).map(l=>l.confirmed));
+  const orphanPrefixes = sheetPrefixes.filter(p=>!linkedPrefixes.has(p));
+
+  holder.innerHTML = `
+    <p class="small-note" style="margin-bottom:10px;">${configuredCount} of ${courseLinks.length} course(s) configured for Semester ${sem}. Once a course is configured here, its attainment calculates automatically in the "Calculate Attainment" tab — nothing to repeat.</p>
+    ${courseLinks.map(link=>{
+      const {course, confirmed, suggested} = link;
+      const saved = confirmed ? savedMaps[confirmed] : null;
+      const configured = saved && saved.roles && Object.keys(saved.roles).length>0;
+      const statusBadge = !confirmed ? '<span class="badge-level lvl-0">Subject not linked</span>' : configured ? '<span class="badge-level lvl-3">Configured</span>' : '<span class="badge-level lvl-0">Needs setup</span>';
+      return `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <h3 style="margin:0;">${course.code} — ${course.name} ${statusBadge}</h3>
+          ${confirmed ? `<button class="btn btn-outline" data-toggle-course="${course.id}">${configured?'Edit':'Set up'}</button>` : ''}
+        </div>
+        ${!confirmed ? `
+          <p class="small-note" style="margin-top:8px;">Which subject in <b>${resultSheet.filename}</b> is this? Pick it once.</p>
+          <div class="field" style="max-width:260px;">
+            <select id="att-setup-prefix-${cssSafe(course.id)}">
+              <option value="">— select —</option>
+              ${sheetPrefixes.map(p=>`<option value="${p}" ${p===suggested?'selected':''}>${p}</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn btn-primary" data-confirm-course-prefix="${course.id}" style="margin-top:8px;">Confirm Subject</button>
+        ` : configured ? `<p class="small-note" style="margin-top:8px;">Subject "${confirmed}": ${Object.values(saved.roles).map(r=>`${r.header} = ${r.max}`).join(', ')}</p>` : `<p class="small-note" style="margin-top:8px;">Linked to subject "${confirmed}" — not yet configured.</p>`}
+        <div id="att-course-editor-${cssSafe(course.id)}" style="display:none;margin-top:12px;"></div>
+      </div>`;
+    }).join('')}
+    ${orphanPrefixes.length ? `<div class="card"><p class="small-note">Other subject columns found in the sheet, not linked to any course in Manage Courses yet: ${orphanPrefixes.join(', ')}</p></div>` : ''}
+  `;
+
+  courseLinks.filter(l=>!l.confirmed).forEach(link=>{
+    const btn = document.querySelector(`[data-confirm-course-prefix="${link.course.id}"]`);
+    if(btn) btn.addEventListener('click', async ()=>{
+      const val = document.getElementById('att-setup-prefix-'+cssSafe(link.course.id)).value;
+      if(!val){ toast('Select which subject this is'); return; }
+      const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+      prefixMapStore[link.course.id] = val;
+      await sSet('attainment_prefix_map', prefixMapStore);
+      renderAttainmentSetupTab();
+    });
+  });
+
+  courseLinks.filter(l=>l.confirmed).forEach(link=>{
+    const toggleBtn = document.querySelector(`[data-toggle-course="${link.course.id}"]`);
+    if(toggleBtn) toggleBtn.addEventListener('click', ()=>{
+      const editorDiv = document.getElementById('att-course-editor-'+cssSafe(link.course.id));
+      const isOpen = editorDiv.style.display !== 'none';
+      if(isOpen){ editorDiv.style.display='none'; editorDiv.innerHTML=''; return; }
+      renderSubjectColumnEditor(editorDiv, resultSheet, link.confirmed, sem, savedMaps[link.confirmed], globalMaxDefaults);
+      editorDiv.style.display='';
+    });
+  });
+}
+
+function renderSubjectColumnEditor(container, resultSheet, prefix, sem, saved, globalMaxDefaults){
+  const candidateIdx = columnsForPrefix(resultSheet, prefix);
+  container.innerHTML = `
+    <div class="table-wrap"><table>
+      <tr><th>Result Sheet Column</th><th>Role</th><th>Max Marks</th></tr>
+      ${candidateIdx.map(i=>{
+        const h = resultSheet.headers[i];
+        const already = (saved && saved.roles && saved.roles[i]) ? saved.roles[i] : null;
+        const label = extractComponentLabel(h);
+        const role = already ? already.role : guessComponentRole(h);
+        const max = already ? already.max : (label && globalMaxDefaults[label] ? globalMaxDefaults[label] : '');
+        return `<tr>
+          <td>${h}</td>
+          <td><select data-subj-role-idx="${i}">
+            <option value="ignore" ${role==='ignore'?'selected':''}>Ignore</option>
+            <option value="internal" ${role==='internal'?'selected':''}>Internal (FA-TH / FA-PR / SLA)</option>
+            <option value="external" ${role==='external'?'selected':''}>External (SA-TH / SA-PR)</option>
+          </select></td>
+          <td><input type="number" data-subj-max-idx="${i}" value="${max||''}" style="width:90px;" placeholder="max"/></td>
+        </tr>`;
+      }).join('')}
+    </table></div>
+    <button class="btn btn-primary" data-save-subject="${prefix}" style="margin-top:10px;">Save "${prefix}"</button>
+  `;
+  container.querySelector(`[data-save-subject]`).addEventListener('click', async ()=>{
+    const roles = {};
+    candidateIdx.forEach(i=>{
+      const roleSel = container.querySelector(`[data-subj-role-idx="${i}"]`);
+      const maxInp = container.querySelector(`[data-subj-max-idx="${i}"]`);
+      const role = roleSel ? roleSel.value : 'ignore';
+      const max = maxInp ? (parseFloat(maxInp.value)||0) : 0;
+      if(role!=='ignore') roles[i] = {role, max, header:resultSheet.headers[i]};
+    });
+    const tagged = Object.keys(roles);
+    if(tagged.length===0){ toast('Tag at least one column as Internal or External, with its maximum marks'); return; }
+    const missingMax = tagged.filter(i=>!roles[i].max);
+    if(missingMax.length){ toast(`Enter the maximum marks for: ${missingMax.map(i=>roles[i].header).join(', ')}`); return; }
+
+    await sSet('attainment_colmap_by_prefix:'+sem+':'+prefix, {roles});
+
+    const newDefaults = {...globalMaxDefaults};
+    Object.values(roles).forEach(r=>{
+      const label = extractComponentLabel(r.header);
+      if(label && r.max) newDefaults[label] = r.max;
+    });
+    await sSet('attainment_component_max_defaults', newDefaults);
+
+    toast(`"${prefix}" saved`);
+    renderAttainmentSetupTab();
+  });
+}
+
+/* ---------- STEP 2: CALCULATE ATTAINMENT (by course) ---------- */
+async function resolveCoursePrefix(course, sheetPrefixes){
+  const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+  const norm = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const anagramKey = s => norm(s).split('').sort().join('');
+  let confirmed = prefixMapStore[course.id] && sheetPrefixes.includes(prefixMapStore[course.id]) ? prefixMapStore[course.id] : null;
+  const abbrMatch = String(course.name||'').match(/\(([A-Za-z0-9]+)\)\s*$/);
+  const codeGuess = COURSE_ABBR_BY_CODE[course.code] || (abbrMatch ? abbrMatch[1] : null);
+  let suggested = null;
+  if(!confirmed && codeGuess && sheetPrefixes.length){
+    suggested = sheetPrefixes.find(p=>norm(p)===norm(codeGuess)) || null;
+    if(suggested){
+      confirmed = suggested;
+      prefixMapStore[course.id] = suggested;
+      await sSet('attainment_prefix_map', prefixMapStore);
+    } else {
+      suggested = sheetPrefixes.find(p=>anagramKey(p)===anagramKey(codeGuess)) || null;
+    }
+  }
+  return {confirmed, suggested, prefixMapStore};
+}
+
+// Gathers everything needed to compute a course's attainment — shared by the "Calculate
+// Attainment" tab and the "CO-PO Attainment Calculation" tab so both stay in sync.
+async function getAttainmentContext(course){
+  const isFinalYear = course.semester===6;
+  const cos = (await sGet('ces_params:'+course.id)) || [];
+  const mapping = (await sGet('copo:'+course.id)) || {};
   const pos = (await sGet('program_params')) || [];
   const resultSheet = await sGet('result_sem:'+course.semester);
+  const benchmark = state.sub.attBenchmark || 60;
 
-  // Indirect attainment source (course/CO level): the Course Exit (student) Survey ONLY.
-  // Also captured per-CO so PO attainment can use each CO's own indirect rating.
   const studentResponses = (await sGet('co_responses:student:'+course.semester)) || [];
-  const coIndirect = {}; // co.id -> {count, avg}
+  const coIndirect = {};
   cos.forEach(co=>{
     const vals = studentResponses.map(r=>r.ratings[course.id+'::'+co.id]).filter(v=>v!=null);
     coIndirect[co.id] = {count: vals.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
@@ -1602,185 +2059,590 @@ async function renderAttainment(){
   const overallVals = cos.map(co=>coIndirect[co.id].avg).filter(v=>v!=null);
   const courseIndirect = {count: studentResponses.length, avg: overallVals.length ? (overallVals.reduce((a,b)=>a+b,0)/overallVals.length) : null};
 
-  // Indirect attainment source (PO/PSO level): Program Exit + Parent + Alumni + Industry
-  // surveys, all rated directly per PO/PSO — equal-weighted average of whichever have data.
-  const poStakeholderKinds = ['program','parent','alumni','industry'];
-  const poByStakeholder = {};
-  for(const k of poStakeholderKinds){
-    const responses = (await sGet('po_responses:'+k)) || [];
-    poByStakeholder[k] = {responses};
+  let programByPo = {};
+  if(isFinalYear && pos.length){
+    const poKinds = ['program','parent','alumni','industry'];
+    const poByStakeholder = {};
+    for(const k of poKinds){ poByStakeholder[k] = (await sGet('po_responses:'+k)) || []; }
+    pos.forEach(p=>{
+      const groupAvgs = poKinds.map(k=>{
+        const vals = poByStakeholder[k].map(r=>r.ratings[p.id]).filter(v=>v!=null);
+        return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+      }).filter(v=>v!=null);
+      programByPo[p.id] = { avg: groupAvgs.length ? (groupAvgs.reduce((a,b)=>a+b,0)/groupAvgs.length) : null };
+    });
   }
-  const programByPo = {};
-  pos.forEach(p=>{
-    const groupAvgs = poStakeholderKinds.map(k=>{
-      const vals = poByStakeholder[k].responses.map(r=>r.ratings[p.id]).filter(v=>v!=null);
-      return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
-    }).filter(v=>v!=null);
-    programByPo[p.id] = { count: poStakeholderKinds.reduce((n,k)=>n+poByStakeholder[k].responses.length,0),
-      avg: groupAvgs.length ? (groupAvgs.reduce((a,b)=>a+b,0)/groupAvgs.length) : null };
+
+  let auto = null, confirmed = null, suggested = null, sheetPrefixes = [];
+  if(resultSheet){
+    sheetPrefixes = extractSheetPrefixes(resultSheet);
+    const res = await resolveCoursePrefix(course, sheetPrefixes);
+    confirmed = res.confirmed; suggested = res.suggested;
+    if(confirmed){
+      const saved = await sGet('attainment_colmap_by_prefix:'+course.semester+':'+confirmed);
+      if(saved && saved.roles && Object.keys(saved.roles).length>0){
+        auto = computeComponentsFromResultSheet(resultSheet, saved.roles, benchmark);
+      }
+    }
+  }
+
+  const inputs = {
+    intLevel: auto?auto.intLevel:0, extLevel: auto?auto.extLevel:0,
+    hasInternal: !!(auto && auto.intComps.length>0), hasExternal: !!(auto && auto.extComps.length>0)
+  };
+
+  return {isFinalYear, cos, mapping, pos, resultSheet, benchmark, coIndirect, courseIndirect, programByPo, auto, confirmed, suggested, sheetPrefixes, inputs};
+}
+
+// "C" + semester + running index of this course within that semester (e.g. C101, C102, C601)
+function courseSerial(course){
+  const inSem = state.courses.filter(c=>c.semester===course.semester);
+  const idx = inSem.findIndex(c=>c.id===course.id);
+  return 'C'+course.semester+String(idx+1).padStart(2,'0');
+}
+async function courseAbbrForDisplay(course){
+  const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+  if(prefixMapStore[course.id]) return prefixMapStore[course.id];
+  const abbrMatch = String(course.name||'').match(/\(([A-Za-z0-9]+)\)\s*$/);
+  return COURSE_ABBR_BY_CODE[course.code] || (abbrMatch ? abbrMatch[1] : course.code);
+}
+
+// COPO Attainment Calculation = (Attainment of relevant COs × Actual mapping strength) /
+// (Maximum mapping strength). Simplified per the institute's worked example: for each PO/PSO,
+// average the mapping strength across only the COs that are actually mapped to it (skip "-"),
+// then PO = (Direct Attainment × that average) / 3. A PO with no mapped COs shows "-".
+function computeCopoAttainment(direct, cos, pos, mapping){
+  return pos.map(p=>{
+    const vals = cos.map(co=> mapping[co.id] ? (mapping[co.id][p.id]||0) : 0).filter(v=>v>0);
+    if(vals.length===0) return {code:p.code, text:p.text, avgStrength:null, value:null};
+    const avgStrength = vals.reduce((a,b)=>a+b,0)/vals.length;
+    const value = (direct*avgStrength)/3;
+    return {code:p.code, text:p.text, avgStrength, value};
   });
+}
 
-  const benchmark = colMap.benchmark!=null ? colMap.benchmark : (saved.benchmark||50);
+/* ---------- STEP 3: CO-PO ATTAINMENT CALCULATION ---------- */
+async function renderAttainmentCopoTab(){
+  const body = document.getElementById('att-body');
+  if(state.courses.length===0){ body.innerHTML = `<div class="empty">Add courses first under Academics → Manage Courses.</div>`; return; }
+  const selId = state.sub.attCourseId || state.courses[0].id;
+  state.sub.attCourseId = selId;
+  const course = state.courses.find(x=>x.id===selId);
 
-  c.innerHTML = `
-    <div class="crumb">Academics</div>
-    <div class="page-head"><div><h2>Attainment Calculation</h2><p class="sub">Course: <b>${course.code} — ${course.name}</b> (Semester ${course.semester})</p></div></div>
+  const ctx = await getAttainmentContext(course);
+  const {direct, indirect, final} = computeAttainment(ctx.inputs, ctx.cos, ctx.coIndirect, ctx.courseIndirect, ctx.mapping, ctx.pos, ctx.programByPo);
+  const copoRows = computeCopoAttainment(direct, ctx.cos, ctx.pos, ctx.mapping);
+  const abbr = await courseAbbrForDisplay(course);
+  const serial = courseSerial(course);
+
+  body.innerHTML = `
     <div class="field" style="max-width:340px;"><label>Course</label>
-      <select id="att-course-select">${state.courses.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name}</option>`).join('')}</select>
+      <select id="att-course-select">${state.courses.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name} (Sem ${co.semester})</option>`).join('')}</select>
     </div>
 
     <div class="assumption-box">
-      Direct Attainment = 80% External Level + 20% Internal Level. Every column of the uploaded
-      Result Sheet can be tagged Internal, External, or Ignored below — there is no limit of one
-      column per side, so FA-TH/FA-PR/SLA (Internal) and SA-TH/SA-PR (External), or any other
-      column layout your Result Sheet uses, can all be read at once. Indirect Attainment (course
-      level) uses the Course Exit (student) Survey only. Parent, Alumni and Industry surveys are
-      PO/PSO-level only and combine with the Program Exit Survey for PO/PSO indirect attainment.
-      CO→PO Attainment = Σ(CO Attainment × mapping strength) ÷ (3 × COs mapped to that PO).
+      COPO Attainment Calculation = (Attainment of relevant COs × Actual mapping strength) /
+      (Maximum mapping strength). For each PO/PSO: PO = (Direct Attainment × Average CO&ndash;PO
+      mapping strength for that PO, across the COs mapped to it) / 3. Direct Attainment for
+      this course = <b>${direct.toFixed(2)}</b>, Final Attainment = <b>${final.toFixed(2)}</b>
+      (from the "Calculate Attainment" tab).
     </div>
 
+    ${ctx.pos.length===0 ? `<div class="card"><div class="empty">Define the shared PO/PSO parameter set first (Survey Parameters).</div></div>` : `
     <div class="card">
-      <h3>1 &middot; Read Internal / External marks from the Semester ${course.semester} Result Sheet</h3>
-      ${!resultSheet ? `<div class="empty">No Result Sheet has been uploaded for Semester ${course.semester} yet — upload one under Academics → Result Sheets, or enter the Internal/External Levels manually in Section 2 below.</div>` : `
-      <p class="small-note">Tag every column that belongs to this course (<b>${resultSheet.filename}</b>, ${resultSheet.rows.length} students) as Internal or External, give its maximum marks, then click "Read from Result Sheet". Columns left as "Ignore" are skipped. Auto-guessed tags are pre-filled from the column name — check and correct them for this course.</p>
-      <div class="field" style="max-width:160px;"><label>Benchmark % (pass mark)</label><input type="number" id="att-benchmark" value="${benchmark}"/></div>
-      <div class="table-wrap" style="margin-top:10px;">
-        <table id="att-colmap-table">
-          <tr><th>Result Sheet Column</th><th>Role</th><th>Max Marks</th></tr>
-          ${resultSheet.headers.map((h,i)=>{
-            const saved_i = colMap.roles && colMap.roles[i] ? colMap.roles[i] : {role: guessComponentRole(h), max:''};
-            return `<tr>
-              <td>${h}</td>
-              <td><select data-role-idx="${i}">
-                <option value="ignore" ${saved_i.role==='ignore'?'selected':''}>Ignore</option>
-                <option value="internal" ${saved_i.role==='internal'?'selected':''}>Internal (FA/SLA)</option>
-                <option value="external" ${saved_i.role==='external'?'selected':''}>External (SA)</option>
-              </select></td>
-              <td><input type="number" data-max-idx="${i}" value="${saved_i.max||''}" style="width:90px;" placeholder="max"/></td>
-            </tr>`;
-          }).join('')}
-        </table>
+      <h3>Average Course Outcomes</h3>
+      <div class="table-wrap"><table>
+        <tr><th></th>${ctx.pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>
+        <tr><td><b>Average Course Outcomes</b></td>${copoRows.map(r=>`<td style="text-align:center;">${r.value!=null?r.value.toFixed(2):'-'}</td>`).join('')}</tr>
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>COPO Attainment</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Course</th><th>Abr</th><th>Code</th><th>Final CO</th>${ctx.pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>
+        <tr><td>${serial}</td><td>${abbr}</td><td>${course.code}</td><td><b>${final.toFixed(2)}</b></td>${copoRows.map(r=>`<td style="text-align:center;">${r.value!=null?r.value.toFixed(2):'-'}</td>`).join('')}</tr>
+      </table></div>
+    </div>
+    `}
+    <div class="card">
+      <button class="btn btn-outline" id="att-export-pdf">Download PDF Report</button>
+    </div>
+  `;
+  document.getElementById('att-course-select').addEventListener('change', e=>{ state.sub.attCourseId=e.target.value; renderAttainment(); });
+  document.getElementById('att-export-pdf')?.addEventListener('click', async ()=>{
+    exportAttainmentPDF(course, ctx.inputs, ctx.cos, ctx.coIndirect, ctx.courseIndirect, ctx.mapping, ctx.pos, ctx.programByPo, ctx.auto ? ctx.auto.componentResults : [], ctx.isFinalYear, abbr, serial);
+  });
+}
+
+/* ---------- STEP 4: COURSE TARGETS (set once per course, used by the Consolidated Report) ---------- */
+async function renderAttainmentTargetsTab(){
+  const body = document.getElementById('att-body');
+  if(state.courses.length===0){ body.innerHTML = `<div class="empty">Add courses first under Academics → Manage Courses.</div>`; return; }
+  const targets = (await sGet('course_targets')) || {};
+
+  body.innerHTML = `
+    <div class="assumption-box">
+      Set the Target CO Attainment for every course once here. The Consolidated Report (next
+      tab) compares each course's calculated CO Attainment against this Target to work out the
+      Deviation and Achieved / Not achieved status.
+    </div>
+    <div class="card">
+      <h3>Bulk upload Targets</h3>
+      <p class="small-note">Excel/CSV columns, in order: <b>Course Code, Target</b>. First row can be a header. Matches by course code — unmatched codes are skipped.</p>
+      <button class="btn btn-outline" id="targets-template" style="margin-bottom:12px;">Download Template</button>
+      <div class="file-drop">
+        <input type="file" id="targets-file" accept=".xlsx,.xls,.csv" />
+        <p style="margin-top:8px;">Choose a file to bulk-set course targets</p>
       </div>
-      <button class="btn btn-outline" id="att-read-sheet" style="margin-top:10px;">Read from Result Sheet</button>
-      `}
     </div>
-
     <div class="card">
-      <h3>2 &middot; Direct Attainment (Internal / External Levels)</h3>
-      <div id="att-component-detail"></div>
+      <h3>All Courses</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Semester</th><th>Course</th><th>Code</th><th>Target</th></tr>
+        ${state.courses.map(co=>`<tr>
+          <td>Sem ${co.semester}</td><td>${co.name}</td><td>${co.code}</td>
+          <td><input type="number" step="0.01" min="0" max="3" style="width:90px;" data-target-course="${co.id}" value="${targets[co.code]!=null?targets[co.code]:''}"/></td>
+        </tr>`).join('')}
+      </table></div>
+      <button class="btn btn-primary" id="targets-save" style="margin-top:12px;">Save Targets</button>
+    </div>
+  `;
+
+  document.getElementById('targets-template').addEventListener('click', ()=>{
+    const aoa = [['Course Code','Target'], ...state.courses.map(co=>[co.code, ''])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:14},{wch:10}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Targets');
+    XLSX.writeFile(wb, 'course_targets_template.xlsx');
+  });
+
+  document.getElementById('targets-file').addEventListener('change', async (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    let updated = 0, skipped = 0;
+    const fresh = (await sGet('course_targets')) || {};
+    json.forEach(row=>{
+      const code = String(row[0]||'').trim();
+      const val = parseFloat(row[1]);
+      if(!code || isNaN(val)){ skipped++; return; }
+      if(!state.courses.some(co=>String(co.code)===code)){ skipped++; return; }
+      fresh[code] = val;
+      updated++;
+    });
+    if(updated===0){ toast('No matching course codes found in that file'); return; }
+    await sSet('course_targets', fresh);
+    toast(`${updated} target(s) updated`+(skipped?`, ${skipped} row(s) skipped`:''));
+    renderAttainmentTargetsTab();
+  });
+
+  document.getElementById('targets-save').addEventListener('click', async ()=>{
+    const fresh = {...targets};
+    state.courses.forEach(co=>{
+      const inp = document.querySelector(`[data-target-course="${co.id}"]`);
+      const val = inp && inp.value!=='' ? parseFloat(inp.value) : null;
+      if(val!=null && !isNaN(val)) fresh[co.code] = val;
+      else delete fresh[co.code];
+    });
+    await sSet('course_targets', fresh);
+    toast('Targets saved');
+  });
+}
+
+/* ---------- STEP 5: CONSOLIDATED REPORT (all subjects of an exam session — Winter/Summer) ---------- */
+const EXAM_SESSION_SEMESTERS = { winter:[1,3,5], summer:[2,4,6] };
+const SEMESTER_ORDINAL = {1:'First',2:'Second',3:'Third',4:'Fourth',5:'Fifth',6:'Sixth'};
+
+async function buildConsolidatedRows(semesters){
+  const targets = (await sGet('course_targets')) || {};
+  const pos = (await sGet('program_params')) || [];
+  const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+  const benchmark = state.sub.attBenchmark || 60;
+  const norm = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+
+  // PO indirect (survey-based) is the same for every course — fetch once, only if needed.
+  let programByPo = {};
+  if(semesters.includes(6) && pos.length){
+    const poKinds = ['program','parent','alumni','industry'];
+    const poByStakeholder = {};
+    for(const k of poKinds){ poByStakeholder[k] = (await sGet('po_responses:'+k)) || []; }
+    pos.forEach(p=>{
+      const groupAvgs = poKinds.map(k=>{
+        const vals = poByStakeholder[k].map(r=>r.ratings[p.id]).filter(v=>v!=null);
+        return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+      }).filter(v=>v!=null);
+      programByPo[p.id] = { avg: groupAvgs.length ? (groupAvgs.reduce((a,b)=>a+b,0)/groupAvgs.length) : null };
+    });
+  }
+
+  const bySem = {};
+  for(const sem of semesters){
+    const coursesInSem = state.courses.filter(c=>c.semester===sem);
+    // Result Sheet, its subject list, and the Course Exit Survey responses are the same for
+    // every course in this semester — fetch each of these ONCE per semester, not per course.
+    const resultSheet = await sGet('result_sem:'+sem);
+    const sheetPrefixes = resultSheet ? extractSheetPrefixes(resultSheet) : [];
+    const studentResponses = (await sGet('co_responses:student:'+sem)) || [];
+    const colmapCache = {};
+
+    const rows = [];
+    for(const course of coursesInSem){
+      const cos = (await sGet('ces_params:'+course.id)) || [];
+      const mapping = (await sGet('copo:'+course.id)) || {};
+
+      const coIndirect = {};
+      cos.forEach(co=>{
+        const vals = studentResponses.map(r=>r.ratings[course.id+'::'+co.id]).filter(v=>v!=null);
+        coIndirect[co.id] = {count: vals.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
+      });
+      const overallVals = cos.map(co=>coIndirect[co.id].avg).filter(v=>v!=null);
+      const courseIndirect = {count: studentResponses.length, avg: overallVals.length ? (overallVals.reduce((a,b)=>a+b,0)/overallVals.length) : null};
+
+      // Resolve the course's Result Sheet subject WITHOUT persisting writes here (bulk read
+      // path) — uses the already-confirmed link if present, else a quick exact-name guess.
+      let confirmed = prefixMapStore[course.id] && sheetPrefixes.includes(prefixMapStore[course.id]) ? prefixMapStore[course.id] : null;
+      if(!confirmed && resultSheet && sheetPrefixes.length){
+        const abbrMatch = String(course.name||'').match(/\(([A-Za-z0-9]+)\)\s*$/);
+        const codeGuess = COURSE_ABBR_BY_CODE[course.code] || (abbrMatch ? abbrMatch[1] : null);
+        if(codeGuess) confirmed = sheetPrefixes.find(p=>norm(p)===norm(codeGuess)) || null;
+      }
+      let auto = null;
+      if(confirmed){
+        if(!(confirmed in colmapCache)) colmapCache[confirmed] = await sGet('attainment_colmap_by_prefix:'+sem+':'+confirmed);
+        const saved = colmapCache[confirmed];
+        if(saved && saved.roles && Object.keys(saved.roles).length>0){
+          auto = computeComponentsFromResultSheet(resultSheet, saved.roles, benchmark);
+        }
+      }
+
+      const inputs = {
+        intLevel: auto?auto.intLevel:0, extLevel: auto?auto.extLevel:0,
+        hasInternal: !!(auto && auto.intComps.length>0), hasExternal: !!(auto && auto.extComps.length>0)
+      };
+      const {final} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+
+      const abbr = confirmed || COURSE_ABBR_BY_CODE[course.code] || course.code;
+      const serial = courseSerial(course);
+      const target = targets[course.code]!=null ? targets[course.code] : null;
+      const deviation = target!=null ? Number((final-target).toFixed(2)) : null;
+      const achieved = target!=null ? (final>=target ? 'Achieved' : 'Not achieved') : '—';
+      rows.push({serial, abbr, code:course.code, target, coAttainment:Number(final.toFixed(2)), deviation, achieved, resultSheetMissing: !resultSheet, notConfirmed: !confirmed});
+    }
+    bySem[sem] = rows;
+  }
+  return bySem;
+}
+
+async function renderAttainmentConsolidatedTab(){
+  const body = document.getElementById('att-body');
+  const session = state.sub.attSession || 'winter';
+  const year = state.sub.attYear || '';
+  const dept = state.sub.attDept || 'Computer Engineering Department';
+  const semesters = EXAM_SESSION_SEMESTERS[session];
+
+  body.innerHTML = `
+    <div class="assumption-box">
+      Generates the consolidated CO Attainment report for a whole exam session — Winter covers
+      Semesters 1, 3, 5; Summer covers Semesters 2, 4, 6 — pulling every course's calculated CO
+      Attainment (Final Attainment) and comparing it against the Target set in the previous tab.
+      Set all targets before generating.
+    </div>
+    <div class="card">
       <div class="row-flex">
-        <div class="field"><label>Internal Level (0-3, average of tagged Internal columns)</label><input type="number" step="0.01" min="0" max="3" id="att-internal-level" value="${saved.manualInternalLevel||0}"/></div>
-        <div class="field"><label>External Level (0-3, average of tagged External columns)</label><input type="number" step="0.01" min="0" max="3" id="att-external-level" value="${saved.manualExternalLevel||0}"/></div>
+        <div class="field"><label>Exam Session</label>
+          <select id="cons-session">
+            <option value="winter" ${session==='winter'?'selected':''}>Winter (Sem 1, 3, 5)</option>
+            <option value="summer" ${session==='summer'?'selected':''}>Summer (Sem 2, 4, 6)</option>
+          </select>
+        </div>
+        <div class="field"><label>Year (e.g. 2025)</label><input id="cons-year" value="${year}" placeholder="2025"/></div>
+        <div class="field" style="flex:1;min-width:220px;"><label>Department Name</label><input id="cons-dept" value="${dept}"/></div>
       </div>
-      <p class="small-note">These two Levels drive the Direct Attainment formula below. They are filled in automatically by "Read from Result Sheet" above, or can be entered/overridden manually if no Result Sheet is available.</p>
-      <button class="btn btn-primary" id="att-calc">Calculate Attainment</button>
-      <button class="btn btn-outline" id="att-export" style="margin-left:8px;">Export Course Attainment Report</button>
+      <button class="btn btn-primary" id="cons-generate" style="margin-top:10px;">Generate Preview</button>
+      <button class="btn btn-outline" id="cons-export-excel" style="margin-top:10px;margin-left:8px;">Download Excel</button>
+      <button class="btn btn-outline" id="cons-export-pdf" style="margin-top:10px;margin-left:8px;">Download PDF</button>
+    </div>
+    <div id="cons-preview"></div>
+  `;
+
+  document.getElementById('cons-session').addEventListener('change', e=>{ state.sub.attSession=e.target.value; renderAttainmentConsolidatedTab(); });
+  document.getElementById('cons-year').addEventListener('change', e=>{ state.sub.attYear=e.target.value.trim(); });
+  document.getElementById('cons-dept').addEventListener('change', e=>{ state.sub.attDept=e.target.value.trim(); });
+
+  async function draw(){
+    const holder = document.getElementById('cons-preview');
+    holder.innerHTML = `<div class="card"><p class="small-note">Calculating…</p></div>`;
+    const bySem = await buildConsolidatedRows(semesters);
+    const allRows = Object.values(bySem).flat();
+    const missingTargets = allRows.filter(r=>r.target==null).length;
+    const missingSetup = allRows.filter(r=>r.resultSheetMissing || r.notConfirmed).length;
+    holder.innerHTML = `
+      ${missingTargets ? `<div class="assumption-box">${missingTargets} course(s) have no Target set yet — they'll show "—" for Deviation/Achieved. Set them in "4 · Course Targets" first if needed.</div>` : ''}
+      ${missingSetup ? `<div class="assumption-box">${missingSetup} course(s) below are marked ⚠ — either no Result Sheet is uploaded for that semester, or that subject hasn't been linked/set up in "1 · Result Sheet Setup" yet. Their CO Attainment will be low/incomplete until that's done.</div>` : ''}
+      ${semesters.map(sem=>{
+        const rows = bySem[sem];
+        if(rows.length===0) return `<div class="card"><h3>${SEMESTER_ORDINAL[sem]} Semester</h3><div class="empty">No courses defined for Semester ${sem}.</div></div>`;
+        return `<div class="card">
+          <h3>${SEMESTER_ORDINAL[sem]} Semester</h3>
+          <div class="table-wrap"><table>
+            <tr><th>Course</th><th>Course Abv</th><th>Course Code</th><th>Target</th><th>CO Attainment</th><th>Deviation</th><th>Achieved / not achieved</th></tr>
+            ${rows.map(r=>`<tr>
+              <td>${r.serial}</td><td>${r.abbr}${(r.resultSheetMissing||r.notConfirmed)?' <span title="Result Sheet not set up for this subject">⚠</span>':''}</td><td>${r.code}</td>
+              <td>${r.target!=null?r.target.toFixed(2):'—'}</td>
+              <td>${r.coAttainment.toFixed(2)}</td>
+              <td>${r.deviation!=null?r.deviation.toFixed(2):'—'}</td>
+              <td>${r.achieved}</td>
+            </tr>`).join('')}
+          </table></div>
+        </div>`;
+      }).join('')}
+    `;
+    return bySem;
+  }
+
+  let lastBySem = await draw();
+
+  document.getElementById('cons-generate').addEventListener('click', async ()=>{ lastBySem = await draw(); });
+  document.getElementById('cons-export-excel').addEventListener('click', async ()=>{
+    exportConsolidatedExcel(session, year, dept, semesters, lastBySem);
+  });
+  document.getElementById('cons-export-pdf').addEventListener('click', async ()=>{
+    exportConsolidatedPDF(session, year, dept, semesters, lastBySem);
+  });
+}
+
+function consolidatedParagraph(session){
+  return session==='winter'
+    ? `After the declaration of the Winter Examination results, the Course Outcome (CO) attainment and deviation analysis were carried out for the Odd Semester courses, as presented in the table below. The analysis revealed that, for certain subjects, the CO attainment did not meet the prescribed target values. The concerned faculty members were instructed to review the attainment results, identify the reasons for the deviation, and prepare a comprehensive Action Plan for Improvement. They were further directed to implement appropriate corrective measures to enhance student performance and improve CO attainment in the subsequent examination.`
+    : `After the declaration of the Summer examination results, the Course Outcome (CO) attainment and deviation analysis were carried out for the Even Semester courses, as presented in the table below. The analysis revealed that, for certain subjects, the CO attainment did not meet the prescribed target values. The concerned faculty members were instructed to review the attainment results, identify the reasons for the deviation, and prepare a comprehensive Action Plan for Improvement. They were further directed to implement appropriate corrective measures to enhance student performance and improve CO attainment in the subsequent examination.`;
+}
+
+function exportConsolidatedExcel(session, year, dept, semesters, bySem){
+  const wb = XLSX.utils.book_new();
+  const aoa = [
+    [dept],
+    [`CO ATTAINMENT FOR EXAM - ${session.toUpperCase()}-20${String(year||'').replace(/^20/,'')}`],
+    ['CO ATTAINMENT'],
+    [consolidatedParagraph(session)],
+  ];
+  semesters.forEach(sem=>{
+    aoa.push([]);
+    aoa.push([SEMESTER_ORDINAL[sem]+' Semester']);
+    aoa.push(['Course','Course Abv','Course Code','Target','CO Attainment','Deviation','Achived / not achieved','Subject Teacher','Signature']);
+    (bySem[sem]||[]).forEach(r=>{
+      aoa.push([r.serial, r.abbr, r.code, r.target!=null?r.target:'', r.coAttainment, r.deviation!=null?r.deviation:'', r.achieved, '', '']);
+    });
+  });
+  aoa.push([]);
+  aoa.push(['Academic coordinator','','','','','','Principal','','']);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:12},{wch:12},{wch:12},{wch:10},{wch:14},{wch:10},{wch:18},{wch:16},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, 'CO Attainment');
+  XLSX.writeFile(wb, `CO_Attainment_${session}_20${String(year||'').replace(/^20/,'')}.xlsx`);
+}
+
+function exportConsolidatedPDF(session, year, dept, semesters, bySem){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape'});
+  let y = 16;
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFontSize(20); doc.setFont(undefined,'bold');
+  doc.text(dept, pageWidth/2, y, {align:'center'}); y+=9;
+  doc.setFontSize(13);
+  doc.text(`CO ATTAINMENT FOR EXAM - ${session.toUpperCase()}-20${String(year||'').replace(/^20/,'')}`, pageWidth/2, y, {align:'center'}); y+=8;
+  doc.text('CO ATTAINMENT', pageWidth/2, y, {align:'center'}); y+=8;
+
+  doc.setFontSize(12); doc.setFont(undefined,'normal');
+  const paraLines = doc.splitTextToSize(consolidatedParagraph(session), pageWidth-28);
+  doc.text(paraLines, 14, y); y += paraLines.length*4.2 + 4;
+
+  semesters.forEach(sem=>{
+    const rows = bySem[sem]||[];
+    if(y>170){ doc.addPage(); y=16; }
+    doc.setFontSize(13); doc.setFont(undefined,'bold');
+    doc.text(SEMESTER_ORDINAL[sem]+' Semester', pageWidth/2, y, {align:'center'}); y+=5;
+    doc.autoTable({
+      startY:y,
+      head:[['Course','Course Abv','Course Code','Target','CO Attainment','Deviation','Achived / not achieved','Subject Teacher','Signature']],
+      body: rows.map(r=>[r.serial, r.abbr, r.code, r.target!=null?r.target.toFixed(2):'', r.coAttainment.toFixed(2), r.deviation!=null?r.deviation.toFixed(2):'', r.achieved, '', '']),
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]},
+      margin:{left:14,right:14}
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  });
+
+  if(y>180){ doc.addPage(); y=16; }
+  doc.setFontSize(12); doc.setFont(undefined,'bold');
+  doc.text('Academic coordinator', 14, y);
+  doc.text('Principal', pageWidth-40, y);
+
+  doc.save(`CO_Attainment_${session}_20${String(year||'').replace(/^20/,'')}.pdf`);
+}
+
+async function renderAttainmentCalcTab(){
+  const body = document.getElementById('att-body');
+  if(state.courses.length===0){ body.innerHTML = `<div class="empty">Add courses first under Academics → Manage Courses.</div>`; return; }
+  const selId = state.sub.attCourseId || state.courses[0].id;
+  state.sub.attCourseId = selId;
+  const course = state.courses.find(x=>x.id===selId);
+  const isFinalYear = course.semester===6;
+
+  const cos = (await sGet('ces_params:'+selId)) || [];
+  const mapping = (await sGet('copo:'+selId)) || {};
+  const pos = (await sGet('program_params')) || [];
+  const resultSheet = await sGet('result_sem:'+course.semester);
+  const benchmark = state.sub.attBenchmark || 60;
+
+  const studentResponses = (await sGet('co_responses:student:'+course.semester)) || [];
+  const coIndirect = {};
+  cos.forEach(co=>{
+    const vals = studentResponses.map(r=>r.ratings[course.id+'::'+co.id]).filter(v=>v!=null);
+    coIndirect[co.id] = {count: vals.length, avg: vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null};
+  });
+  const overallVals = cos.map(co=>coIndirect[co.id].avg).filter(v=>v!=null);
+  const courseIndirect = {count: studentResponses.length, avg: overallVals.length ? (overallVals.reduce((a,b)=>a+b,0)/overallVals.length) : null};
+
+  let programByPo = {};
+  if(isFinalYear && pos.length){
+    const poKinds = ['program','parent','alumni','industry'];
+    const poByStakeholder = {};
+    for(const k of poKinds){ poByStakeholder[k] = (await sGet('po_responses:'+k)) || []; }
+    pos.forEach(p=>{
+      const groupAvgs = poKinds.map(k=>{
+        const vals = poByStakeholder[k].map(r=>r.ratings[p.id]).filter(v=>v!=null);
+        return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+      }).filter(v=>v!=null);
+      programByPo[p.id] = { avg: groupAvgs.length ? (groupAvgs.reduce((a,b)=>a+b,0)/groupAvgs.length) : null };
+    });
+  }
+
+  let auto = null, confirmed = null, suggested = null, sheetPrefixes = [];
+  if(resultSheet){
+    sheetPrefixes = extractSheetPrefixes(resultSheet);
+    const res = await resolveCoursePrefix(course, sheetPrefixes);
+    confirmed = res.confirmed; suggested = res.suggested;
+    if(confirmed){
+      const saved = await sGet('attainment_colmap_by_prefix:'+course.semester+':'+confirmed);
+      if(saved && saved.roles && Object.keys(saved.roles).length>0){
+        auto = computeComponentsFromResultSheet(resultSheet, saved.roles, benchmark);
+      }
+    }
+  }
+
+  body.innerHTML = `
+    <div class="field" style="max-width:340px;"><label>Course</label>
+      <select id="att-course-select">${state.courses.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name} (Sem ${co.semester})</option>`).join('')}</select>
+    </div>
+
+    <div class="assumption-box">
+      Internal = average Level of FA-TH, FA-PR and SLA columns; External = average Level of
+      SA-TH and SA-PR columns — configured once per subject under "1 · Result Sheet Setup".
+      Level from % of students ≥ benchmark: below benchmark → Level 1 (flat); at/above → 1/2/3
+      (by 60/70/80% bands) plus the tenths digit as a decimal, capped at 3.
+      Direct = 0.8×External + 0.2×Internal. Indirect = average Course Exit Survey rating per CO.
+      Final = 0.8×Direct + 0.2×Indirect. PO/PSO Attainment (Section 6) is Final Year (Sem 6)
+      only. Unmapped CO–PO cells are shown as "-", not 0.
+    </div>
+
+    <div class="card">
+      <h3>1 &middot; Internal / External marks</h3>
+      ${!resultSheet ? `<div class="empty">No Result Sheet uploaded for Semester ${course.semester} yet.</div>` : !confirmed ? `
+        <p class="small-note">Which subject in <b>${resultSheet.filename}</b> is "${course.code} — ${course.name}"? Pick it once — it's remembered for every future visit.</p>
+        <div class="field" style="max-width:260px;">
+          <label>Result Sheet Subject</label>
+          <select id="att-prefix-select">
+            <option value="">— select —</option>
+            ${sheetPrefixes.map(p=>`<option value="${p}" ${p===suggested?'selected':''}>${p}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn btn-primary" id="att-confirm-prefix" style="margin-top:10px;">Confirm Subject</button>
+      ` : !auto ? `
+        <div class="empty">"${confirmed}" hasn't been set up yet. <a href="#" id="att-goto-setup">Go to Result Sheet Setup</a> to tag its Internal/External columns — every course using it will then read automatically.</div>
+        <button class="btn btn-outline" id="att-change-subject" style="margin-top:8px;">Change Subject</button>
+      ` : `
+        <p class="small-note">Reading automatically for subject "${confirmed}" (benchmark ${benchmark}%). <a href="#" id="att-goto-setup">Edit its column mapping</a> if needed.</p>
+        <div id="att-component-detail"></div>
+        <button class="btn btn-outline" id="att-change-subject" style="margin-top:8px;">Change Subject</button>
+      `}
     </div>
 
     <div id="att-results"></div>
   `;
   document.getElementById('att-course-select').addEventListener('change', e=>{ state.sub.attCourseId=e.target.value; renderAttainment(); });
 
-  const readBtn = document.getElementById('att-read-sheet');
-  if(readBtn) readBtn.addEventListener('click', async ()=>{
-    const bmk = parseFloat(document.getElementById('att-benchmark').value)||0;
-    const roles = {};
-    resultSheet.headers.forEach((h,i)=>{
-      const roleSel = document.querySelector(`[data-role-idx="${i}"]`);
-      const maxInp = document.querySelector(`[data-max-idx="${i}"]`);
-      const role = roleSel ? roleSel.value : 'ignore';
-      const max = maxInp ? (parseFloat(maxInp.value)||0) : 0;
-      if(role!=='ignore') roles[i] = {role, max, header:h};
-    });
-    const tagged = Object.keys(roles);
-    if(tagged.length===0){ toast('Tag at least one column as Internal or External, with its maximum marks'); return; }
-    const missingMax = tagged.filter(i=>!roles[i].max);
-    if(missingMax.length){ toast(`Enter the maximum marks for: ${missingMax.map(i=>roles[i].header).join(', ')}`); return; }
+  const gotoSetup = document.getElementById('att-goto-setup');
+  if(gotoSetup) gotoSetup.addEventListener('click', (e)=>{ e.preventDefault(); state.sub.attTab='setup'; state.sub.attSetupSem=course.semester; renderAttainment(); });
 
-    const componentResults = tagged.map(i=>{
-      const {role, max, header} = roles[i];
-      let appeared=0, above=0;
-      resultSheet.rows.forEach(row=>{
-        const raw = parseFloat(row[i]);
-        if(!isNaN(raw)){ appeared++; if((raw/max*100)>=bmk) above++; }
-      });
-      const pct = appeared ? (above/appeared*100) : 0;
-      return {idx:i, header, role, max, appeared, above, pct, level: levelFromPct(pct)};
-    });
-    const intComps = componentResults.filter(x=>x.role==='internal');
-    const extComps = componentResults.filter(x=>x.role==='external');
-    const intLevel = intComps.length ? (intComps.reduce((a,x)=>a+x.level,0)/intComps.length) : 0;
-    const extLevel = extComps.length ? (extComps.reduce((a,x)=>a+x.level,0)/extComps.length) : 0;
+  const confirmPrefixBtn = document.getElementById('att-confirm-prefix');
+  if(confirmPrefixBtn) confirmPrefixBtn.addEventListener('click', async ()=>{
+    const val = document.getElementById('att-prefix-select').value;
+    if(!val){ toast('Select which subject this is in the Result Sheet'); return; }
+    const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+    prefixMapStore[selId] = val;
+    await sSet('attainment_prefix_map', prefixMapStore);
+    toast('Subject confirmed');
+    renderAttainmentCalcTab();
+  });
 
-    document.getElementById('att-internal-level').value = intLevel.toFixed(2);
-    document.getElementById('att-external-level').value = extLevel.toFixed(2);
-    await sSet('attainment_colmap:'+selId, {benchmark:bmk, roles});
-    await sSet('attainment_components:'+selId, componentResults);
+  const changeSubjectBtn = document.getElementById('att-change-subject');
+  if(changeSubjectBtn) changeSubjectBtn.addEventListener('click', async ()=>{
+    if(!confirm('Change which Result Sheet subject this course reads from?')) return;
+    const prefixMapStore = (await sGet('attainment_prefix_map')) || {};
+    delete prefixMapStore[selId];
+    await sSet('attainment_prefix_map', prefixMapStore);
+    renderAttainmentCalcTab();
+  });
 
+  if(auto){
     const holder = document.getElementById('att-component-detail');
     holder.innerHTML = `<div class="table-wrap"><table>
       <tr><th>Column</th><th>Group</th><th>Appeared</th><th>≥ Benchmark</th><th>%</th><th>Level</th></tr>
-      ${componentResults.map(x=>`<tr><td>${x.header}</td><td>${x.role==='internal'?'Internal':'External'}</td><td>${x.appeared}</td><td>${x.above}</td><td>${x.pct.toFixed(1)}%</td><td><span class="badge-level ${levelClass(x.level)}">${x.level}</span></td></tr>`).join('')}
-    </table></div>`;
-    toast(`Read ${resultSheet.rows.length} student row(s) across ${tagged.length} column(s)`);
+      ${auto.componentResults.map(x=>`<tr><td>${x.header}</td><td>${x.role==='internal'?'Internal':'External'}</td><td>${x.appeared}</td><td>${x.above}</td><td>${x.pct.toFixed(1)}%</td><td><span class="badge-level ${levelClass(x.level)}">${x.level.toFixed(2)}</span></td></tr>`).join('')}
+    </table></div>
+    <p style="margin-top:8px;"><b>Internal Level</b> = ${auto.intLevel.toFixed(2)} &middot; <b>External Level</b> = ${auto.extLevel.toFixed(2)}</p>`;
+  }
+
+  const inputs = {
+    intLevel: auto?auto.intLevel:0, extLevel: auto?auto.extLevel:0,
+    hasInternal: !!(auto && auto.intComps.length>0), hasExternal: !!(auto && auto.extComps.length>0)
+  };
+  renderAttainmentResults(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, isFinalYear);
+
+  document.getElementById('att-export')?.addEventListener('click', async ()=>{
+    const abbr = await courseAbbrForDisplay(course);
+    const serial = courseSerial(course);
+    exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, auto ? auto.componentResults : [], isFinalYear, abbr, serial);
   });
-
-  // Show any previously-read component breakdown on load
-  (async ()=>{
-    const comps = await sGet('attainment_components:'+selId);
-    if(comps && comps.length){
-      document.getElementById('att-component-detail').innerHTML = `<div class="table-wrap"><table>
-        <tr><th>Column</th><th>Group</th><th>Appeared</th><th>≥ Benchmark</th><th>%</th><th>Level</th></tr>
-        ${comps.map(x=>`<tr><td>${x.header}</td><td>${x.role==='internal'?'Internal':'External'}</td><td>${x.appeared}</td><td>${x.above}</td><td>${x.pct.toFixed(1)}%</td><td><span class="badge-level ${levelClass(x.level)}">${x.level}</span></td></tr>`).join('')}
-      </table></div>`;
-    }
-  })();
-
-  document.getElementById('att-calc').addEventListener('click', async ()=>{
-    const benchmark2 = parseFloat(document.getElementById('att-benchmark') ? document.getElementById('att-benchmark').value : benchmark) || benchmark;
-    const intLevel = parseFloat(document.getElementById('att-internal-level').value)||0;
-    const extLevel = parseFloat(document.getElementById('att-external-level').value)||0;
-    const payload = {benchmark:benchmark2, manualInternalLevel:intLevel, manualExternalLevel:extLevel};
-    await sSet('attainment:'+selId, payload);
-    renderAttainmentResults(course, payload, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+  document.getElementById('att-export-pdf')?.addEventListener('click', async ()=>{
+    const abbr = await courseAbbrForDisplay(course);
+    const serial = courseSerial(course);
+    exportAttainmentPDF(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, auto ? auto.componentResults : [], isFinalYear, abbr, serial);
   });
-
-  document.getElementById('att-export').addEventListener('click', async ()=>{
-    const intLevel = parseFloat(document.getElementById('att-internal-level').value)||saved.manualInternalLevel||0;
-    const extLevel = parseFloat(document.getElementById('att-external-level').value)||saved.manualExternalLevel||0;
-    const payload = {benchmark, manualInternalLevel:intLevel, manualExternalLevel:extLevel};
-    const comps = (await sGet('attainment_components:'+selId)) || [];
-    exportAttainmentSheet(course, payload, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps);
-  });
-
-  renderAttainmentResults(course, saved, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
 }
-
-function levelFromPct(pct){
-  if(pct>=80) return 3;
-  if(pct>=70) return 2;
-  if(pct>=60) return 1;
-  return 0;
-}
-function levelClass(l){ return 'lvl-'+Math.round(l); }
 
 function computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo){
-  const intLevel = inputs.manualInternalLevel||0;
-  const extLevel = inputs.manualExternalLevel||0;
+  const hasInternal = inputs.hasInternal!==false; // default true for backward-compat callers
+  const hasExternal = inputs.hasExternal!==false;
+  // If a subject has no Internal (or no External) component at all, don't treat the missing
+  // side as 0 — treat it as the baseline Level 1 and still apply the full 0.8/0.2 formula.
+  // e.g. External absent, Internal=3.0 → 0.8×1 + 0.2×3.0 = 1.40
+  const intLevel = hasInternal ? (inputs.intLevel||0) : 1;
+  const extLevel = hasExternal ? (inputs.extLevel||0) : 1;
   const direct = 0.8*extLevel + 0.2*intLevel;
 
   const indirect = courseIndirect.avg!=null ? courseIndirect.avg : 0;
   const final = 0.8*direct + 0.2*indirect;
 
-  // Per-CO attainment: shared course Direct blended with that CO's own indirect rating
-  // (falls back to the course-wide indirect average if this specific CO has no responses).
   const coAttainment = {};
   cos.forEach(co=>{
     const ind = coIndirect[co.id] && coIndirect[co.id].avg!=null ? coIndirect[co.id].avg : indirect;
     coAttainment[co.id] = 0.8*direct + 0.2*ind;
   });
 
-  // CO -> PO/PSO: Σ(CO Attainment × mapping strength) / (3 × mapped CO count)
   const poRows = pos.map(p=>{
     let weighted = 0, mappedCount = 0;
     cos.forEach(co=>{
@@ -1796,21 +2658,24 @@ function computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos
   return {intLevel, extLevel, direct, indirect, final, coAttainment, poRows};
 }
 
-function renderAttainmentResults(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo){
+function renderAttainmentResults(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, isFinalYear){
   const box = document.getElementById('att-results');
   const {intLevel, extLevel, direct, indirect, final, coAttainment, poRows} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+  const hasInternal = inputs.hasInternal!==false;
+  const hasExternal = inputs.hasExternal!==false;
+  const directFormula = `= 0.8 × ${extLevel.toFixed(2)}${hasExternal?'':' (assumed, no External component)'} + 0.2 × ${intLevel.toFixed(2)}${hasInternal?'':' (assumed, no Internal component)'} = <b>${direct.toFixed(2)}</b>`;
 
   box.innerHTML = `
     <div class="card">
-      <h3>3 &middot; Direct Attainment</h3>
+      <h3>2 &middot; Direct Attainment</h3>
       <div class="stat-grid">
-        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(intLevel)}">${intLevel.toFixed(2)}</span></div><div class="l">Internal Level</div></div>
-        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(extLevel)}">${extLevel.toFixed(2)}</span></div><div class="l">External Level</div></div>
+        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(intLevel)}">${intLevel.toFixed(2)}</span></div><div class="l">Internal Level${hasInternal?'':' (assumed — not applicable)'}</div></div>
+        <div class="stat-box"><div class="v"><span class="badge-level ${levelClass(extLevel)}">${extLevel.toFixed(2)}</span></div><div class="l">External Level${hasExternal?'':' (assumed — not applicable)'}</div></div>
       </div>
-      <p><b>Direct Attainment</b> = 0.8 × ${extLevel.toFixed(2)} + 0.2 × ${intLevel.toFixed(2)} = <b>${direct.toFixed(2)}</b> / 3</p>
+      <p><b>Direct Attainment</b> ${directFormula}</p>
     </div>
     <div class="card">
-      <h3>4 &middot; Indirect Attainment (Course Exit Survey, per CO)</h3>
+      <h3>3 &middot; Indirect Attainment (Course Exit Survey, per CO)</h3>
       ${cos.length===0 ? '<div class="empty">No Course Outcomes defined for this course.</div>' : `
       <div class="table-wrap"><table>
         <tr><th>CO</th><th>Statement</th><th>Responses</th><th>Average Rating</th></tr>
@@ -1819,30 +2684,45 @@ function renderAttainmentResults(course, inputs, cos, coIndirect, courseIndirect
           return `<tr><td><b>${co.code}</b></td><td>${co.text||''}</td><td>${ind.count}</td><td>${ind.avg!=null?ind.avg.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td></tr>`;
         }).join('')}
       </table></div>`}
-      <p style="margin-top:10px;"><b>Indirect Attainment</b> (course-wide average of CO ratings) = <b>${indirect.toFixed(2)}</b> / 3 &middot; ${courseIndirect.count} response(s)</p>
+      <p style="margin-top:10px;"><b>Indirect Attainment</b> (average of CO ratings) = <b>${indirect.toFixed(2)}</b> / 3</p>
     </div>
     <div class="card">
-      <h3>5 &middot; Final Course Attainment (and per-CO attainment)</h3>
-      <p><b>Final Course Attainment</b> = 0.8 × ${direct.toFixed(2)} + 0.2 × ${indirect.toFixed(2)} = <span class="badge-level ${levelClass(Math.round(final))}" style="font-size:16px;">${final.toFixed(2)} / 3</span></p>
+      <h3>4 &middot; Final Course Attainment</h3>
+      <p><b>Final Attainment</b> = 0.8 × ${direct.toFixed(2)} + 0.2 × ${indirect.toFixed(2)} = <span class="badge-level ${levelClass(final)}" style="font-size:16px;">${final.toFixed(2)}</span></p>
       ${cos.length>0 ? `<div class="table-wrap" style="margin-top:10px;"><table>
-        <tr><th>CO</th><th>Attainment (Direct blended with that CO's own indirect)</th></tr>
-        ${cos.map(co=>`<tr><td><b>${co.code}</b></td><td>${coAttainment[co.id].toFixed(2)} / 3</td></tr>`).join('')}
+        <tr><th>CO</th><th>Attainment</th></tr>
+        ${cos.map(co=>`<tr><td><b>${co.code}</b></td><td>${coAttainment[co.id].toFixed(2)}</td></tr>`).join('')}
       </table></div>` : ''}
     </div>
     <div class="card">
-      <h3>6 &middot; PO / PSO Attainment</h3>
-      <p class="small-note">CO→PO Direct = Σ(CO Attainment × mapping strength) ÷ (3 × COs mapped to that PO). PO Indirect = equal-weighted average of the Program Exit, Parent, Alumni and Industry surveys' direct PO/PSO ratings.</p>
+      <h3>5 &middot; CO&ndash;PO/PSO Mapping</h3>
+      <p class="small-note">(Attainment of relevant COs × Actual mapping strength) / (Maximum mapping strength). Unmapped cells shown as "-".</p>
+      ${(cos.length===0||pos.length===0) ? '<div class="empty">Define COs and the PO/PSO set first.</div>' : `
+      <div class="table-wrap"><table>
+        <tr><th>CO \\ PO</th>${pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>
+        ${cos.map(co=>`<tr><td><b>${co.code}</b></td>${pos.map(p=>`<td style="text-align:center;">${mapCell(mapping[co.id]?mapping[co.id][p.id]:0)}</td>`).join('')}</tr>`).join('')}
+      </table></div>`}
+    </div>
+    ${isFinalYear ? `
+    <div class="card">
+      <h3>6 &middot; PO / PSO Attainment <span class="small-note">(Final Year courses only)</span></h3>
+      <p class="small-note">CO→PO Direct = Σ(CO Attainment × mapping strength) ÷ (3 × COs mapped to that PO). PO Indirect = average of the Program Exit, Parent, Alumni and Industry surveys' direct PO/PSO ratings.</p>
       ${pos.length===0 ? '<div class="empty">Define the PO/PSO parameter set first (Survey Parameters).</div>' : `
       <div class="table-wrap"><table>
-        <tr><th>Code</th><th>Statement</th><th>Direct (from COs)</th><th>Indirect (Program/Parent/Alumni/Industry)</th><th>Attainment</th></tr>
-        ${poRows.map(r=>`<tr><td><b>${r.code}</b></td><td>${r.text||''}</td><td>${r.mappedCount?r.directPo.toFixed(2)+' / 3':'<span class="small-note">not mapped</span>'}</td><td>${r.indirectPo!=null?r.indirectPo.toFixed(2)+' / 3':'<span class="small-note">no responses yet</span>'}</td><td><b>${r.value.toFixed(2)} / 3</b></td></tr>`).join('')}
+        <tr><th>Code</th><th>Statement</th><th>Direct (from COs)</th><th>Indirect (Surveys)</th><th>Attainment</th></tr>
+        ${poRows.map(r=>`<tr><td><b>${r.code}</b></td><td>${r.text||''}</td><td>${r.mappedCount?r.directPo.toFixed(2):'<span class="small-note">not mapped</span>'}</td><td>${r.indirectPo!=null?r.indirectPo.toFixed(2):'<span class="small-note">no responses yet</span>'}</td><td><b>${r.value.toFixed(2)}</b></td></tr>`).join('')}
       </table></div>`}
+    </div>` : `<div class="card"><p class="small-note">PO / PSO Attainment (Section 6) is calculated for Final Year (Semester 6) courses only.</p></div>`}
+    <div class="card">
+      <button class="btn btn-outline" id="att-export">Export Course Attainment Report (Excel)</button>
+      <button class="btn btn-outline" id="att-export-pdf" style="margin-left:8px;">Download PDF Report</button>
     </div>
   `;
 }
 
-function exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps){
-  const {intLevel, extLevel, direct, indirect, final, coAttainment, poRows} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+function exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps, isFinalYear, abbr, serial){
+  const {intLevel, extLevel, direct, indirect, final, coAttainment} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+  const copoRows = computeCopoAttainment(direct, cos, pos, mapping);
   const wb = XLSX.utils.book_new();
 
   const summaryAoa = [
@@ -1852,15 +2732,15 @@ function exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, 
     [],
     ['INTERNAL / EXTERNAL COMPONENTS (from Result Sheet)'],
     ['Column','Group','Appeared','≥ Benchmark','%','Level'],
-    ...comps.map(x=>[x.header, x.role==='internal'?'Internal':'External', x.appeared, x.above, Number(x.pct.toFixed(2)), x.level]),
+    ...comps.map(x=>[x.header, x.role==='internal'?'Internal':'External', x.appeared, x.above, Number(x.pct.toFixed(2)), Number(x.level.toFixed(2))]),
     [],
     ['DIRECT ATTAINMENT'],
-    ['Internal Level (0-3)', Number(intLevel.toFixed(3))],
-    ['External Level (0-3)', Number(extLevel.toFixed(3))],
+    ['Internal Level', Number(intLevel.toFixed(3))],
+    ['External Level', Number(extLevel.toFixed(3))],
     ['Direct Attainment = 0.8×External + 0.2×Internal', Number(direct.toFixed(3))],
     [],
     ['INDIRECT ATTAINMENT (from Course Exit Survey)'],
-    ['Course Outcome','Statement','Responses','Average Rating (/3)'],
+    ['Course Outcome','Statement','Responses','Average Rating'],
     ...cos.map(co=>[co.code, co.text||'', coIndirect[co.id].count, coIndirect[co.id].avg!=null?Number(coIndirect[co.id].avg.toFixed(3)):'']),
     ['Course-wide Indirect Attainment (average)', '', courseIndirect.count, Number(indirect.toFixed(3))],
     [],
@@ -1872,29 +2752,107 @@ function exportAttainmentSheet(course, inputs, cos, coIndirect, courseIndirect, 
   XLSX.utils.book_append_sheet(wb, ws1, 'Attainment Calculation');
 
   const coRows = cos.map(co=>{
-    const strengths = pos.map(p=> (mapping[co.id] ? (mapping[co.id][p.id]||0) : 0));
-    return [co.code, co.text, coAttainment[co.id].toFixed(3), ...strengths];
+    const strengths = pos.map(p=> mapCell(mapping[co.id] ? (mapping[co.id][p.id]||0) : 0));
+    return [co.code, co.text, Number(coAttainment[co.id].toFixed(3)), ...strengths];
   });
   const coAoa = [['CO Code','CO Statement','CO Attainment', ...pos.map(p=>p.code)], ...coRows];
   const ws2 = XLSX.utils.aoa_to_sheet(coAoa);
   XLSX.utils.book_append_sheet(wb, ws2, 'CO-PO Mapping');
 
-  const poAoa = [
-    ['COPO Attainment Calculation'],
-    ['(Attainment of relevant COs × Actual mapping strength) / (Maximum mapping strength)'],
-    [],
-    ['PO/PSO Code','Statement','Direct (from COs) /3','Indirect (Program/Parent/Alumni/Industry) /3','Attainment /3'],
-    ...poRows.map(r=>[r.code, r.text||'', r.mappedCount?Number(r.directPo.toFixed(3)):'', r.indirectPo!=null?Number(r.indirectPo.toFixed(3)):'', Number(r.value.toFixed(3))]),
-    [],
-    ['Course Abr Code','Final Attainment', ...pos.map(p=>p.code)],
-    [course.code, Number(final.toFixed(3)), ...poRows.map(r=>Number(r.value.toFixed(3)))]
-  ];
-  const ws3 = XLSX.utils.aoa_to_sheet(poAoa);
-  XLSX.utils.book_append_sheet(wb, ws3, 'PO-PSO Attainment');
+  if(pos.length){
+    const poAoa = [
+      ['COPO Attainment Calculation'],
+      ['(Attainment of relevant COs × Actual mapping strength) / (Maximum mapping strength)'],
+      [],
+      ['Average Course Outcomes', ...pos.map(p=>p.code)],
+      ['Average Course Outcomes', ...copoRows.map(r=>r.value!=null?Number(r.value.toFixed(3)):'-')],
+      [],
+      ['Course','Abr','Code','Final CO', ...pos.map(p=>p.code)],
+      [serial||'', abbr||'', course.code, Number(final.toFixed(3)), ...copoRows.map(r=>r.value!=null?Number(r.value.toFixed(3)):'-')]
+    ];
+    const ws3 = XLSX.utils.aoa_to_sheet(poAoa);
+    XLSX.utils.book_append_sheet(wb, ws3, 'COPO Attainment');
+  }
 
   XLSX.writeFile(wb, `attainment_${course.code}_sem${course.semester}.xlsx`);
 }
 
+function exportAttainmentPDF(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, comps, isFinalYear, abbr, serial){
+  const {intLevel, extLevel, direct, indirect, final, coAttainment} = computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo);
+  const copoRows = computeCopoAttainment(direct, cos, pos, mapping);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let y = 14;
+
+  doc.setFontSize(14); doc.setFont(undefined,'bold');
+  doc.text('ATTAINMENT CALCULATION', 105, y, {align:'center'}); y+=8;
+  doc.setFontSize(12); doc.setFont(undefined,'normal');
+  doc.text(`Subject & Sub Code : ${course.name}`, 14, y); y+=6;
+  doc.text(`${course.code}   Semester ${course.semester}`, 14, y); y+=8;
+
+  if(cos.length && pos.length){
+    doc.autoTable({
+      startY:y,
+      head:[['COPO Mapping', ...pos.map(p=>p.code)]],
+      body: cos.map(co=>[co.code, ...pos.map(p=>String(mapCell(mapping[co.id]?mapping[co.id][p.id]:0)))]),
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]}
+    });
+    y = doc.lastAutoTable.finalY + 4;
+    doc.setFontSize(12); doc.text('CO level taken From Result', 14, y); y+=6;
+  }
+
+  if(comps.length){
+    doc.autoTable({
+      startY:y,
+      head:[['Column','Group','%','Level']],
+      body: comps.map(x=>[x.header, x.role==='internal'?'Internal':'External', x.pct.toFixed(1)+'%', x.level.toFixed(2)]),
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]}
+    });
+    y = doc.lastAutoTable.finalY + 4;
+  }
+
+  doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('DIRECT ATTAINMENT', 14, y); doc.setFont(undefined,'normal'); y+=6;
+  doc.setFontSize(12); doc.text(`= 0.8 × External (${extLevel.toFixed(2)}) + 0.2 × Internal (${intLevel.toFixed(2)}) = ${direct.toFixed(2)}`, 14, y); y+=8;
+
+  doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('INDIRECT ATTAINMENT (from course exit survey)', 14, y); doc.setFont(undefined,'normal'); y+=6;
+  if(cos.length){
+    doc.autoTable({
+      startY:y,
+      head:[['Course Outcomes', ...cos.map(co=>co.code)]],
+      body:[['Average', ...cos.map(co=>coIndirect[co.id].avg!=null?coIndirect[co.id].avg.toFixed(2):'-')]],
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]}
+    });
+    y = doc.lastAutoTable.finalY + 4;
+  }
+  doc.setFontSize(12); doc.text(`Average = ${indirect.toFixed(2)}`, 14, y); y+=8;
+
+  doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('FINAL ATTAINMENT', 14, y); doc.setFont(undefined,'normal'); y+=6;
+  doc.setFontSize(12); doc.text(`= 0.8 × Direct Attainment + 0.2 × Indirect Attainment`, 14, y); y+=6;
+  doc.setFontSize(12); doc.text(`= 0.8 * ${direct.toFixed(2)} + 0.2 * ${indirect.toFixed(2)} = ${final.toFixed(2)}`, 14, y); y+=10;
+
+  if(pos.length){
+    if(y>240){ doc.addPage(); y=14; }
+    doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('COPO Attainment Calculation', 14, y); doc.setFont(undefined,'normal'); y+=5;
+    doc.setFontSize(12); doc.text('(Attainment of relevant COs x Actual mapping strength) / (Maximum mapping strength)', 14, y); y+=6;
+    doc.autoTable({
+      startY:y,
+      head:[['Average Course Outcomes', ...pos.map(p=>p.code)]],
+      body:[['Average Course Outcomes', ...copoRows.map(r=>r.value!=null?r.value.toFixed(2):'-')]],
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]}
+    });
+    y = doc.lastAutoTable.finalY + 8;
+    if(y>240){ doc.addPage(); y=14; }
+    doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('COPO Attainment', 14, y); doc.setFont(undefined,'normal'); y+=6;
+    doc.autoTable({
+      startY:y,
+      head:[['Course','Abr','Code','Final CO', ...pos.map(p=>p.code)]],
+      body:[[serial||'', abbr||'', course.code, final.toFixed(2), ...copoRows.map(r=>r.value!=null?r.value.toFixed(2):'-')]],
+      styles:{fontSize:12}, headStyles:{fillColor:[18,42,82]}
+    });
+  }
+
+  doc.save(`attainment_${course.code}_sem${course.semester}.pdf`);
+}
 </script>
 </body>
 </html>
