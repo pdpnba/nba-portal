@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
-<title>Dr. Panjabrao Deshmukh Polytechnic, NBA Portal</title>
+<title>NBA Portal</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -1168,8 +1168,7 @@ async function renderStakeholderSurveyFill(kind){
     document.querySelectorAll('#fill-table select[data-co]').forEach(sel=>{
       if(sel.value){ ratings[sel.dataset.co] = parseInt(sel.value,10); answered++; }
     });
-    if(answered===0){ toast('Please rate at least one Course Outcome'); return; }
-    if(answered<totalCos && !confirm('Some Course Outcomes are left unrated. Submit anyway?')) return;
+    if(answered<totalCos){ toast('Please rate every Course Outcome before submitting — all CO ratings are compulsory.'); return; }
 
     const fresh = (await sGet(key)) || [];
     if(fresh.some(r=>r.enrollment===state.enrollment)){
@@ -1296,8 +1295,7 @@ async function renderPOSurveyFill(kind){
     document.querySelectorAll('#pos-table select[data-po]').forEach(sel=>{
       if(sel.value){ ratings[sel.dataset.po] = parseInt(sel.value,10); answered++; }
     });
-    if(answered===0){ toast('Please rate at least one Program Outcome / PSO'); return; }
-    if(answered<pos.length && !confirm('Some Program Outcomes / PSOs are left unrated. Submit anyway?')) return;
+    if(answered<pos.length){ toast('Please rate every Program Outcome / PSO before submitting — all PO/PSO ratings are compulsory.'); return; }
 
     const fresh = (await sGet(key)) || [];
     if(cfg.once && fresh.some(r=>r.enrollment===identity.enrollment)){
