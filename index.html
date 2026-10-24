@@ -1184,7 +1184,7 @@ async function renderPOSurveyFill(kind){
     if(already){
       c.innerHTML = `
         <div class="crumb">Exit Survey</div>
-        <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+        <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">This feedback is being taken for continuous improvement in academic, co-curricular, extra curricular and other activities in Institute. This feedback will also be useful for improvement in overall ambience of Institute. Attainment Levels - Low, Medium & High. Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
         <div class="card"><div class="empty">You have already submitted the ${cfg.title} on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once.</div></div>
       `;
       return;
@@ -1193,7 +1193,7 @@ async function renderPOSurveyFill(kind){
 
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+    <div class="page-head"><div><h2>${cfg.title}</h2><p class="sub">This feedback is being taken for continuous improvement in academic, co-curricular, extra curricular and other activities in Institute. This feedback will also be useful for improvement in overall ambience of Institute. Attainment Levels - Low, Medium & High. Rate each Program Outcome / PSO — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
     <div class="card">
       ${kind==='program' ? `<p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name}</p>` : poIdentityFieldsHtml(kind, industries)}
       ${pos.length===0 ? '<div class="empty">No Program Outcomes / PSOs have been set up yet — ask the Admin to add them under Exit Survey → Survey Parameters → Program / Parent / Industry / Alumni.</div>' : `
