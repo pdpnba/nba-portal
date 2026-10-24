@@ -1072,7 +1072,7 @@ async function renderStakeholderSurveyFill(kind){
   if(already){
     c.innerHTML = `
       <div class="crumb">Exit Survey</div>
-      <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+      <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">This feedback is being taken for continuous improvement in academic, co-curricular, extra curricular and other activities in Institute. This feedback will also be useful for improvement in overall ambience of Institute. Attainment Levels - Low, Medium & High. Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
       <div class="card">
         <div class="empty">You have already submitted the Course Exit Survey for Semester ${semester} on ${new Date(already.submittedAt).toLocaleString()}. Each student may submit this survey only once per semester.</div>
       </div>
@@ -1082,7 +1082,7 @@ async function renderStakeholderSurveyFill(kind){
 
   c.innerHTML = `
     <div class="crumb">Exit Survey</div>
-    <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
+    <div class="page-head"><div><h2>Course Exit Survey</h2><p class="sub">This feedback is being taken for continuous improvement in academic, co-curricular, extra curricular and other activities in Institute. This feedback will also be useful for improvement in overall ambience of Institute. Attainment Levels - Low, Medium & High. Rate each Course Outcome for every subject — 1 = Low, 2 = Moderate, 3 = High.</p></div></div>
     <div class="card">
       <p class="small-note">Enrollment Number <b>${state.enrollment||'— (ask Admin to add one to your account)'}</b> &middot; ${state.name} &middot; Semester ${semester}</p>
       ${subjectCols.length===0 ? '<div class="empty">No subjects/Course Outcomes have been set up for this semester yet — ask the Admin to add them under Academics → Manage Courses and Exit Survey → Survey Parameters.</div>' : `
