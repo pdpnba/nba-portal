@@ -1372,7 +1372,7 @@ async function renderSurveyResponses(){
         <div class="field" style="flex:1;min-width:200px;"><label>Search (name / enrollment / industry)</label><input id="sr-search" placeholder="Type to filter…"/></div>
         <button class="btn btn-outline" id="sr-export">Export to Excel</button>
         <button class="btn btn-outline" id="sr-export-pdf">${isCoWise ? 'Download PDF (Course Exit)' : 'Download Consolidated PDF (Program/Parent/Alumni/Industry)'}</button>
-        <button class="btn btn-danger" id="sr-delete-all">Delete All</button>
+        ${state.role==='teacher' ? '' : '<button class="btn btn-danger" id="sr-delete-all">Delete All</button>'}
       </div>
       <div id="sr-table-holder" style="margin-top:14px;"></div>
     </div>
@@ -1406,7 +1406,7 @@ async function renderSurveyResponses(){
     if(isCoWise) await exportStudentSurveyPDF(sem, subjectCols, allResponses);
     else await exportConsolidatedSurveyPDF(pos);
   });
-  document.getElementById('sr-delete-all').addEventListener('click', async ()=>{
+  document.getElementById('sr-delete-all')?.addEventListener('click', async ()=>{
     if(allResponses.length===0){ toast('There are no responses to delete.'); return; }
     if(!confirm(`Delete all ${allResponses.length} response(s) for ${isCoWise?(kind+' — Semester '+sem):kind}? This cannot be undone.`)) return;
     await sDelete(key);
@@ -1700,15 +1700,15 @@ async function renderCopo(){
 
   c.innerHTML = `
     <div class="crumb">Academics</div>
-    <div class="page-head"><div><h2>CO&ndash;PO&ndash;PSO Mapping</h2><p class="sub">Enter mapping strength (0&ndash;3) for each Course Outcome against each PO/PSO, or upload a file.</p></div></div>
+    <div class="page-head"><div><h2>CO&ndash;PO&ndash;PSO Mapping</h2><p class="sub">${state.role==='teacher'?'View and download the mapping strength of each Course Outcome against each PO/PSO.':'Enter mapping strength (0&ndash;3) for each Course Outcome against each PO/PSO, or upload a file.'}</p></div></div>
     <div class="card">
       <div class="field" style="max-width:340px;"><label>Course</label>
         <select id="copo-course-select">${state.courses.map(co=>`<option value="${co.id}" ${co.id===selId?'selected':''}>${co.code} — ${co.name}</option>`).join('')}</select>
       </div>
-      <div class="file-drop" style="margin-bottom:14px;">
+      ${state.role==='teacher' ? '' : `<div class="file-drop" style="margin-bottom:14px;">
         <input type="file" id="copo-file" accept=".xlsx,.xls,.csv" />
         <p style="margin-top:8px;">Optional: upload a CO×PO matrix file (first row = PO/PSO codes, first column = CO codes)</p>
-      </div>
+      </div>`}
       ${(cos.length===0||pos.length===0) ? '<div class="empty">Define this course\'s COs (Survey Parameters) and the shared PO/PSO set first — the mapping grid and file upload need both of these before they can appear.</div>' : renderCopoGrid(cos,pos,mapping)}
     </div>
   `;
@@ -1762,6 +1762,15 @@ async function renderCopo(){
     }
   });
 
+  const dlBtn = document.getElementById('copo-download');
+  if(dlBtn) dlBtn.addEventListener('click', ()=>{
+    const course = state.courses.find(x=>x.id===selId);
+    const aoa = [['CO \\ PO', ...pos.map(p=>p.code)], ...cos.map(co=>[co.code, ...pos.map(p=>{ const v = mapping[co.id] && mapping[co.id][p.id]; return v>0 ? v : '-'; })])];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'CO-PO-PSO');
+    XLSX.writeFile(wb, `CO-PO-PSO_Mapping_${course?course.code:'course'}.xlsx`);
+  });
+
   const saveBtn = document.getElementById('copo-save');
   if(saveBtn) saveBtn.addEventListener('click', async ()=>{
     const newMapping = {};
@@ -1786,6 +1795,16 @@ async function renderCopo(){
 }
 
 function renderCopoGrid(cos,pos,mapping){
+  if(state.role==='teacher'){
+    const head = `<tr><th>CO \\ PO</th>${pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>`;
+    const rows = cos.map(co=>`<tr><td><b>${co.code}</b></td>${pos.map(p=>{
+      const raw = mapping[co.id] && mapping[co.id][p.id];
+      return `<td style="text-align:center;">${raw>0?raw:'-'}</td>`;
+    }).join('')}</tr>`).join('');
+    return `<div class="table-wrap"><table>${head}${rows}</table></div>
+    <p class="small-note">Scale: 1 = low, 2 = medium, 3 = high. "-" = no mapping. View only.</p>
+    <button class="btn btn-outline" id="copo-download" style="margin-top:8px;">Download Mapping (Excel)</button>`;
+  }
   const hasMapping = Object.keys(mapping||{}).some(k=>mapping[k] && Object.values(mapping[k]).some(v=>v>0));
   const head = `<tr><th>CO \\ PO</th>${pos.map(p=>`<th>${p.code}</th>`).join('')}</tr>`;
   const rows = cos.map(co=>{
