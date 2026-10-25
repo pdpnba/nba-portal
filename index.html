@@ -397,8 +397,8 @@ async function showLoginForm(role){
   holder.style.display='block';
 
   const helpNote = role==='admin'
-   ? `<p class="small-note">Default account is <b>admin</b> </p>`
-    : `<p class="small-note">Use the username &amp; password your Coordinator gave you. </p>`;
+    ? `<p class="small-note">Default account: <b>admin</b> / <b>admin@123</b> — change this after first login under Administration → Manage Users.</p>`
+    : `<p class="small-note">Use the username &amp; password your Admin/Coordinator gave you. Don&rsquo;t have one yet? Ask your Admin to create it under Manage Users.</p>`;
 
   holder.innerHTML = `
     <div class="login-form">
@@ -489,13 +489,13 @@ const menus = {
       {id:'results', label:'Result Sheets'},
       {id:'copo', label:'CO-PO-PSO Mapping'},
       {id:'attainment', label:'Attainment Calculation'},
+      {id:'subject-reports', label:'Subject-wise Reports'},
     ]}
   ],
   teacher:[
     {grp:'Academics', items:[
-      {id:'results', label:'Result Sheets'},
+      {id:'subject-reports', label:'My Subject Reports'},
       {id:'copo', label:'CO-PO-PSO Mapping'},
-      {id:'attainment', label:'Attainment Calculation'},
     ]},
     {grp:'Exit Survey', items:[
       {id:'survey-responses', label:'Survey Responses'},
@@ -561,12 +561,16 @@ async function renderView(view){
     'results': renderResults,
     'copo': renderCopo,
     'attainment': renderAttainment,
+    'subject-reports': renderSubjectReports,
     'ces-fill': ()=>renderStakeholderSurveyFill('student'),
     'pes-fill': ()=>renderPOSurveyFill('program'),
     'guest-parent': ()=>renderPOSurveyFill('parent'),
     'guest-industry': ()=>renderPOSurveyFill('industry'),
     'guest-alumni': ()=>renderPOSurveyFill('alumni'),
   };
+  if(state.role==='teacher' && ['results','attainment','users','students','survey-params','industries','courses'].includes(view)){
+    c.innerHTML = `<div class="empty">This section is not available for Teacher accounts.</div>`; return;
+  }
   if(renderers[view]) await renderers[view]();
   else c.innerHTML = `<div class="empty">Not found</div>`;
 }
@@ -587,6 +591,8 @@ async function renderUsers(){
   const me = users.find(u=>u.id===state.userId);
   const teachers = users.filter(u=>u.role==='teacher');
   const students = users.filter(u=>u.role==='student');
+  await loadCoursesIfNeeded();
+  const teacherSubjects = (await sGet('teacher_subjects')) || {};
 
   c.innerHTML = `
     <div class="crumb">Administration</div>
@@ -616,13 +622,17 @@ async function renderUsers(){
       <h3>Teachers (${teachers.length})</h3>
       ${teachers.length===0?'<div class="empty">No teacher accounts yet.</div>':`
       <div class="table-wrap"><table>
-        <tr><th>Name</th><th>Username</th><th></th></tr>
-        ${teachers.map(u=>`<tr><td>${u.name}</td><td>${u.username}</td><td>
+        <tr><th>Name</th><th>Username</th><th>Assigned Subjects</th><th></th></tr>
+        ${teachers.map(u=>{
+          const ids = teacherSubjects[u.id]||[];
+          const names = ids.map(id=>{const co=state.courses.find(x=>x.id===id); return co?co.code:null;}).filter(Boolean);
+          return `<tr><td>${u.name}</td><td>${u.username}</td><td>${names.length?names.join(', '):'<span class="small-note">none</span>'} <button class="icon-btn" style="color:var(--teal);" data-assign="${u.id}">Assign</button></td><td>
           <button class="icon-btn" data-reset="${u.id}">Reset Password</button>
           &nbsp;|&nbsp;
           <button class="icon-btn" data-del="${u.id}">Remove</button>
-        </td></tr>`).join('')}
-      </table></div>`}
+        </td></tr>`;}).join('')}
+      </table></div>
+      <div id="assign-panel" style="margin-top:14px;"></div>`}
     </div>
 
     <div class="card">
@@ -677,6 +687,33 @@ async function renderUsers(){
     toast('Account updated');
     renderUsers();
   });
+
+  document.querySelectorAll('[data-assign]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const tid = btn.dataset.assign;
+    const t = teachers.find(u=>u.id===tid);
+    const cur = new Set(teacherSubjects[tid]||[]);
+    const panel = document.getElementById('assign-panel');
+    if(state.courses.length===0){ panel.innerHTML = '<div class="empty">Add courses first under Academics → Manage Courses.</div>'; return; }
+    panel.innerHTML = `<div class="card" style="background:#fbf6ec;">
+      <h3 style="margin-top:0;">Assign subjects to ${t.name}</h3>
+      ${[1,2,3,4,5,6].map(sem=>{
+        const cs = state.courses.filter(x=>x.semester===sem);
+        return cs.length ? `<p style="margin:8px 0 4px;"><b>Semester ${sem}</b></p>` + cs.map(co=>`<label style="display:block;font-size:13px;margin-left:8px;"><input type="checkbox" data-asg="${co.id}" ${cur.has(co.id)?'checked':''}/> ${co.code} — ${co.name}</label>`).join('') : '';
+      }).join('')}
+      <button class="btn btn-primary" id="asg-save" style="margin-top:10px;">Save Assignment</button>
+      <button class="btn btn-outline" id="asg-cancel" style="margin-top:10px;">Cancel</button>
+    </div>`;
+    document.getElementById('asg-cancel').addEventListener('click', ()=>{ panel.innerHTML=''; });
+    document.getElementById('asg-save').addEventListener('click', async ()=>{
+      const ids = [...panel.querySelectorAll('[data-asg]')].filter(x=>x.checked).map(x=>x.dataset.asg);
+      const fresh = (await sGet('teacher_subjects')) || {};
+      fresh[tid] = ids;
+      await sSet('teacher_subjects', fresh);
+      toast('Subjects assigned');
+      renderUsers();
+    });
+    panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }));
 
   document.getElementById('t-add').addEventListener('click', async ()=>{
     const name = document.getElementById('t-name').value.trim();
@@ -2673,6 +2710,80 @@ async function renderAttainmentCalcTab(){
     const serial = courseSerial(course);
     exportAttainmentPDF(course, inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo, auto ? auto.componentResults : [], isFinalYear, abbr, serial);
   });
+}
+
+
+/* ---------- SUBJECT-WISE ATTAINMENT REPORTS (admin: all subjects; teacher: assigned subjects only) ---------- */
+async function renderSubjectReports(){
+  await loadCoursesIfNeeded();
+  const c = document.getElementById('content');
+  const isTeacher = state.role==='teacher';
+  const assigned = (await sGet('teacher_subjects')) || {};
+  const allUsers = (await sGet('users')) || [];
+  let courses = state.courses.slice();
+  if(isTeacher){
+    const mine = new Set(assigned[state.userId]||[]);
+    courses = courses.filter(x=>mine.has(x.id));
+  }
+  const semFilter = state.sub.srepSem || 'all';
+  if(semFilter!=='all') courses = courses.filter(x=>String(x.semester)===String(semFilter));
+  const teacherNames = id => allUsers.filter(u=>u.role==='teacher' && (assigned[u.id]||[]).includes(id)).map(u=>u.name).join(', ');
+
+  c.innerHTML = `
+    <div class="crumb">Academics</div>
+    <div class="page-head"><div><h2>${isTeacher?'My Subject Reports':'Subject-wise Attainment Reports'}</h2>
+      <p class="sub">${isTeacher?'Attainment reports for the subjects assigned to you by the Admin. View or download as PDF / Excel.':'Generate the attainment report for any subject. Teachers see and download only the subjects you assign to them under Manage Users.'}</p></div></div>
+    <div class="card">
+      <div class="field" style="max-width:200px;"><label>Semester</label>
+        <select id="srep-sem"><option value="all">All</option>${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(semFilter)===String(n)?'selected':''}>Semester ${n}</option>`).join('')}</select>
+      </div>
+      ${courses.length===0 ? `<div class="empty">${isTeacher?'No subjects have been assigned to you yet — please contact the Admin.':'No courses found. Add them under Academics → Manage Courses.'}</div>` : `
+      <div class="table-wrap"><table>
+        <tr><th>Course</th><th>Sem</th>${isTeacher?'':'<th>Teacher(s)</th>'}<th style="text-align:right;">Report</th></tr>
+        ${courses.map(co=>`<tr><td>${co.code} — ${co.name}</td><td>${co.semester}</td>${isTeacher?'':`<td>${teacherNames(co.id)||'<span class="small-note">unassigned</span>'}</td>`}
+          <td style="text-align:right;white-space:nowrap;">
+            <button class="btn btn-outline" data-srep-view="${co.id}">View</button>
+            <button class="btn btn-outline" data-srep-pdf="${co.id}">PDF</button>
+            <button class="btn btn-outline" data-srep-xls="${co.id}">Excel</button>
+          </td></tr>`).join('')}
+      </table></div>`}
+    </div>
+    <div id="srep-detail"></div>
+  `;
+  document.getElementById('srep-sem').addEventListener('change', e=>{ state.sub.srepSem=e.target.value; renderSubjectReports(); });
+
+  async function load(id){
+    const course = state.courses.find(x=>x.id===id);
+    if(isTeacher && !(assigned[state.userId]||[]).includes(id)) { toast('Not assigned to you'); return null; }
+    const ctx = await getAttainmentContext(course);
+    const abbr = await courseAbbrForDisplay(course);
+    return {course, ctx, abbr, serial: courseSerial(course)};
+  }
+  function warn(r){
+    if(!r.ctx.resultSheet) return `No Result Sheet uploaded for Semester ${r.course.semester} yet — ask the Admin.`;
+    if(!r.ctx.auto) return `Result Sheet setup for this subject is incomplete — ask the Admin to finish it under Attainment Calculation.`;
+    return null;
+  }
+  const doExport = async (id, kind)=>{
+    const r = await load(id); if(!r) return;
+    const w = warn(r); if(w){ toast(w); return; }
+    const {course,ctx,abbr,serial} = r;
+    const comps = ctx.auto ? ctx.auto.componentResults : [];
+    (kind==='pdf'?exportAttainmentPDF:exportAttainmentSheet)(course, ctx.inputs, ctx.cos, ctx.coIndirect, ctx.courseIndirect, ctx.mapping, ctx.pos, ctx.programByPo, comps, ctx.isFinalYear, abbr, serial);
+  };
+  c.querySelectorAll('[data-srep-pdf]').forEach(b=>b.addEventListener('click', ()=>doExport(b.dataset.srepPdf,'pdf')));
+  c.querySelectorAll('[data-srep-xls]').forEach(b=>b.addEventListener('click', ()=>doExport(b.dataset.srepXls,'xls')));
+  c.querySelectorAll('[data-srep-view]').forEach(b=>b.addEventListener('click', async ()=>{
+    const r = await load(b.dataset.srepView); if(!r) return;
+    const w = warn(r);
+    const d = document.getElementById('srep-detail');
+    d.innerHTML = `<h3 style="margin-top:8px;">${r.course.code} — ${r.course.name}</h3>${w?`<div class="assumption-box">${w}</div>`:''}<div id="att-results"></div>`;
+    renderAttainmentResults(r.course, r.ctx.inputs, r.ctx.cos, r.ctx.coIndirect, r.ctx.courseIndirect, r.ctx.mapping, r.ctx.pos, r.ctx.programByPo, r.ctx.isFinalYear);
+    const comps = r.ctx.auto ? r.ctx.auto.componentResults : [];
+    document.getElementById('att-export')?.addEventListener('click', ()=>exportAttainmentSheet(r.course, r.ctx.inputs, r.ctx.cos, r.ctx.coIndirect, r.ctx.courseIndirect, r.ctx.mapping, r.ctx.pos, r.ctx.programByPo, comps, r.ctx.isFinalYear, r.abbr, r.serial));
+    document.getElementById('att-export-pdf')?.addEventListener('click', ()=>exportAttainmentPDF(r.course, r.ctx.inputs, r.ctx.cos, r.ctx.coIndirect, r.ctx.courseIndirect, r.ctx.mapping, r.ctx.pos, r.ctx.programByPo, comps, r.ctx.isFinalYear, r.abbr, r.serial));
+    d.scrollIntoView({behavior:'smooth'});
+  }));
 }
 
 function computeAttainment(inputs, cos, coIndirect, courseIndirect, mapping, pos, programByPo){
